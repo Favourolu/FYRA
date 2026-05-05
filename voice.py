@@ -87,5 +87,5 @@ def speak(text: str):
         pygame.mixer.music.unload()
         os.unlink(tmp_path)
 
-    except Exception as e:
-        print(f"[voice error: {e}]")
+    except Exception:
+        pass

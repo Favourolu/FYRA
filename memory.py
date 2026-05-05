@@ -132,8 +132,10 @@ def get_relevant_memory(intent: str, user_input: str) -> str:
     return "\n\n".join(sections) if sections else "No memory stored yet."
 
 
-def apply_memory_update(extracted: dict):
-    if not extracted or extracted.get("type") == "none":
+def apply_memory_update(extracted):
+    if not extracted or not isinstance(extracted, dict):
+        return
+    if extracted.get("type") == "none":
         return
 
     kind = extracted.get("type")
