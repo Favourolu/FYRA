@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FYRA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="scanlines"></div>
+
+    <div class="ui-container">
+        <!-- Header -->
+        <header class="hud-header">
+            <div class="logo">
+                <span class="logo-text">F Y R A</span>
+                <span class="logo-sub">PERSONAL AI // v1.0</span>
+            </div>
+            <div class="status-bar">
+                <div class="status-indicator" id="statusDot"></div>
+                <span class="status-text" id="statusText">READY</span>
+            </div>
+            <div class="header-right">
+                <span class="date-time" id="dateTime"></span>
+            </div>
+        </header>
+
+        <!-- Main -->
+        <main class="main-content">
+
+            <!-- Left panel -->
+            <div class="side-panel left-panel">
+                <div class="panel-label">// SYSTEM</div>
+                <div class="panel-content">
+                    <div class="info-row">
+                        <span class="info-key">FAVOUR</span>
+                        <span class="info-val blink">ONLINE</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-key">FIYIN</span>
+                        <span class="info-val blink">ONLINE</span>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="info-row">
+                        <span class="info-key">MEMORY</span>
+                        <span class="info-val" id="memStatus">LOADED</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-key">INTENT</span>
+                        <span class="info-val" id="lastIntent">—</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-key">VOICE</span>
+                        <span class="info-val" id="voiceStatus">READY</span>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="info-row">
+                        <span class="info-key">MODEL</span>
+                        <span class="info-val" style="font-size:9px">HAIKU-4.5</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Center orb -->
+            <div class="orb-container">
+                <canvas id="orbCanvas" width="420" height="420"></canvas>
+                <div class="orb-state-text" id="orbStateText">STANDBY</div>
+            </div>
+
+            <!-- Right panel - conversation -->
+            <div class="side-panel right-panel">
+                <div class="panel-label">// CONVERSATION</div>
+                <div class="conversation-log" id="conversationLog">
+                    <div class="message fyra-message">
+                        <span class="msg-label">FYRA</span>
+                        <span class="msg-text">Systems online. Hello, Favour — how can I help you today?</span>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- Input -->
+        <footer class="input-area">
+            <button class="mic-btn" id="micBtn" title="Voice input">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                    <line x1="12" y1="19" x2="12" y2="23"/>
+                    <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+            </button>
+            <div class="input-wrapper">
+                <input type="text" id="textInput" placeholder="SPEAK TO FYRA..." autocomplete="off" spellcheck="false"/>
+                <div class="input-line"></div>
+            </div>
+            <button class="send-btn" id="sendBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+            </button>
+        </footer>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="/static/js/fyra.js"></script>
+</body>
+</html>

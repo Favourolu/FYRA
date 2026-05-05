@@ -6,3 +6,6 @@ numpy
 pygame
 msgpack
 requests
+flask
+flask-socketio
+simple-websocket
