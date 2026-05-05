@@ -1,0 +1,8 @@
+anthropic
+python-dotenv
+openai-whisper
+sounddevice
+numpy
+pygame
+msgpack
+requests

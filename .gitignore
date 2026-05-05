@@ -1,0 +1,10 @@
+.env
+memory/*.json
+logs/
+__pycache__/
+*.pyc
+*.pyo
+*.wav
+*.mp3
+*.tmp
+.DS_Store
