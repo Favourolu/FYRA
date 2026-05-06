@@ -356,7 +356,8 @@ socket.on('conversation_history', data => {
 socket.on('startup_brief', data => {
     if (data.text) {
         addMessage(data.text, 'fyra');
-        if (data.audio) playAudio(data.audio);
+        // Don't autoplay — Safari blocks audio before user interaction
+        // Audio will play after first user tap
     }
 });
 
