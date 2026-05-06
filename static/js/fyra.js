@@ -10,9 +10,22 @@ const micBtn       = document.getElementById('micBtn');
 const statusDot    = document.getElementById('statusDot');
 const statusText   = document.getElementById('statusText');
 const orbStateText = document.getElementById('orbStateText');
+const orbResponse  = document.getElementById('orbResponse');
 const convLog      = document.getElementById('conversationLog');
 const lastIntentEl = document.getElementById('lastIntent');
 const dateTimeEl   = document.getElementById('dateTime');
+
+let responseFadeTimer = null;
+
+function showResponse(text) {
+    if (responseFadeTimer) clearTimeout(responseFadeTimer);
+    orbResponse.textContent = text;
+    orbResponse.classList.add('visible');
+    // Fade out after 12 seconds
+    responseFadeTimer = setTimeout(() => {
+        orbResponse.classList.remove('visible');
+    }, 12000);
+}
 
 // ── State ────────────────────────────────────────────────────
 let orbState = 'idle';
@@ -338,7 +351,7 @@ micBtn.addEventListener('click', () => {
 
 // ── SocketIO events ───────────────────────────────────────────
 socket.on('fyra_response', data => {
-    addMessage(data.text, 'fyra');
+    showResponse(data.text);
     if (data.intent) lastIntentEl.textContent = data.intent.replace(/_/g, ' ').toUpperCase();
     data.audio ? playAudio(data.audio) : setOrbState('idle');
 });
@@ -381,11 +394,7 @@ socket.on('conversation_history', data => {
 });
 
 socket.on('startup_brief', data => {
-    if (data.text) {
-        addMessage(data.text, 'fyra');
-        // Don't autoplay — Safari blocks audio before user interaction
-        // Audio will play after first user tap
-    }
+    if (data.text) showResponse(data.text);
 });
 
 socket.on('voice_set', data => {

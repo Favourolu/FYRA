@@ -30,57 +30,26 @@
         <!-- Main -->
         <main class="main-content">
 
-            <!-- Left panel -->
-            <div class="side-panel left-panel">
-                <div class="panel-label">// PROFILES</div>
-                <div class="panel-content">
-                    <div class="profile-block">
-                        <div class="profile-name" id="favourName">FAVOUR</div>
-                        <div class="profile-detail" id="favourLikes">—</div>
-                    </div>
-                    <div class="divider"></div>
-                    <div class="profile-block">
-                        <div class="profile-name" id="fiyinName">FIYIN</div>
-                        <div class="profile-detail" id="fiyinLikes">—</div>
-                    </div>
-                    <div class="divider"></div>
-                    <div class="info-row">
-                        <span class="info-key">TASKS</span>
-                        <span class="info-val" id="openTasks">—</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-key">INTENT</span>
-                        <span class="info-val" id="lastIntent">—</span>
-                    </div>
-                    <div class="divider"></div>
-                    <!-- Voice setting -->
-                    <div class="panel-label" style="margin-top:8px">// VOICE</div>
-                    <div class="voice-input-row">
-                        <input type="text" id="voiceIdInput" placeholder="Fish Audio voice ID" />
-                        <button id="voiceSetBtn">SET</button>
-                    </div>
-                    <div class="info-val" id="voiceStatus" style="font-size:9px;margin-top:4px">DEFAULT</div>
-                </div>
-            </div>
-
-            <!-- Center orb -->
+            <!-- Orb -->
             <div class="orb-container">
-                <canvas id="orbCanvas" width="420" height="420"></canvas>
+                <canvas id="orbCanvas" width="480" height="480"></canvas>
                 <div class="orb-state-text" id="orbStateText">STANDBY</div>
-            </div>
-
-            <!-- Right panel - conversation -->
-            <div class="side-panel right-panel">
-                <div class="panel-label">// CONVERSATION</div>
-                <div class="conversation-log" id="conversationLog">
-                    <div class="message fyra-message">
-                        <span class="msg-label">FYRA</span>
-                        <span class="msg-text">Systems online. I'm ready, Favour — what do you need?</span>
-                    </div>
-                </div>
+                <div class="orb-response" id="orbResponse"></div>
             </div>
 
         </main>
+
+        <!-- Hidden log (keeps socket handlers working) -->
+        <div id="conversationLog" style="display:none"></div>
+        <!-- Hidden profile fields -->
+        <span id="favourName" style="display:none"></span>
+        <span id="favourLikes" style="display:none"></span>
+        <span id="fiyinName"  style="display:none"></span>
+        <span id="fiyinLikes" style="display:none"></span>
+        <span id="openTasks"  style="display:none"></span>
+        <span id="lastIntent" style="display:none"></span>
+        <span id="voiceStatus" style="display:none"></span>
+        <input id="voiceIdInput" style="display:none"/>
 
         <!-- Input -->
         <footer class="input-area">

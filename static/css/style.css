@@ -138,9 +138,8 @@ body::before {
 .main-content {
     flex: 1;
     display: flex;
-    align-items: stretch;
-    padding: 16px 20px;
-    gap: 16px;
+    align-items: center;
+    justify-content: center;
     overflow: hidden;
     min-height: 0;
 }
@@ -309,18 +308,34 @@ body::before {
 
 /* ── Orb ── */
 .orb-container {
-    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     position: relative;
-    min-width: 0;
 }
 
 #orbCanvas {
-    max-width: min(420px, 100%);
-    max-height: calc(100vh - 180px);
+    max-width: min(480px, 90vw);
+    max-height: calc(100vh - 200px);
+}
+
+.orb-response {
+    max-width: 520px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.7;
+    letter-spacing: 1px;
+    color: var(--text);
+    margin-top: 18px;
+    min-height: 2.4em;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+    padding: 0 24px;
+}
+
+.orb-response.visible {
+    opacity: 1;
 }
 
 .orb-state-text {
