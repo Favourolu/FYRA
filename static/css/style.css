@@ -11,10 +11,6 @@ html, body {
     position: relative;
     width: 100vw;
     height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
     overflow: hidden;
 }
 
@@ -76,39 +72,49 @@ html, body {
 }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
-/* ── Canvas ── */
+/* ── Canvas — fills full viewport ── */
 #orbCanvas {
     display: block;
-    max-width: min(700px, 92vw);
-    max-height: calc(100vh - 160px);
-    width: 700px;
-    height: 700px;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 0;
 }
 
-/* ── State + response text ── */
+/* ── State + response text — centered overlays ── */
 .orb-state-text {
+    position: fixed;
+    bottom: 120px;
+    left: 50%;
+    transform: translateX(-50%);
     font-family: 'Share Tech Mono', monospace;
     font-size: 11px;
     letter-spacing: 5px;
     color: rgba(100,180,255,0.5);
-    margin-top: 8px;
     text-transform: lowercase;
+    z-index: 5;
+    white-space: nowrap;
 }
 
 .orb-response {
-    max-width: 560px;
+    position: fixed;
+    bottom: 140px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(560px, 88vw);
     text-align: center;
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.8;
     letter-spacing: 0.5px;
-    color: rgba(200,230,255,0.85);
-    margin-top: 14px;
-    min-height: 2em;
+    color: rgba(200,230,255,0.9);
     opacity: 0;
     transition: opacity 0.5s ease;
+    z-index: 5;
     padding: 0 20px;
 }
 .orb-response.visible { opacity: 1; }
+.orb-state-text { bottom: calc(80px + 1em); }
 
 /* ── Input bar ── */
 .input-area {
@@ -178,11 +184,6 @@ html, body {
 
 /* ── Mobile ── */
 @media (max-width: 768px) {
-    #orbCanvas {
-        width: 380px !important;
-        height: 380px !important;
-        max-width: 95vw;
-    }
     .orb-response { font-size: 11px; padding: 0 14px; }
     .input-area { padding: 10px 16px 18px; }
 }

@@ -1,4 +1,5 @@
 import os
+import re
 import base64
 import socket as _socket
 from flask import Flask, render_template
@@ -32,6 +33,17 @@ def _local_ip() -> str:
         return ip
     except Exception:
         return "localhost"
+
+
+def _strip_md(text: str) -> str:
+    text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)   # bold/italic
+    text = re.sub(r'#{1,6}\s+', '', text)                    # headers
+    text = re.sub(r'`{1,3}[^`]*`{1,3}', '', text)           # code
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.M)    # bullets
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.M)    # numbered lists
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)   # links
+    text = re.sub(r'\n+', ' ', text).strip()
+    return text
 
 
 def _tts(text: str):
@@ -113,13 +125,13 @@ def handle_message(data):
         # TTS when we hit a natural sentence boundary
         stripped = sentence_buf.strip()
         if stripped and stripped[-1] in ".!?:" and len(stripped) >= 12:
-            audio = _tts(stripped)
+            audio = _tts(_strip_md(stripped))
             sentence_buf = ""
             emit("audio_chunk", {"audio": audio})
 
     # Flush any remaining text
     if sentence_buf.strip():
-        audio = _tts(sentence_buf.strip())
+        audio = _tts(_strip_md(sentence_buf.strip()))
         emit("audio_chunk", {"audio": audio})
 
     emit("stream_end", {"intent": classified_intent})

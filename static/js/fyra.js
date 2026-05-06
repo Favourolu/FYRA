@@ -38,15 +38,16 @@ function showResponse(text) {
 
 // ── Three.js Particle Orb ─────────────────────────────────────
 const scene    = new THREE.Scene();
-const camera   = new THREE.PerspectiveCamera(55, 1, 1, 3000);
+const camera   = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 1, 3000);
 camera.position.set(0, 0, 580);
 
 const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
 function resizeRenderer() {
-    const sz = Math.min(window.innerWidth, window.innerHeight - 120);
-    renderer.setSize(sz, sz);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
 }
 resizeRenderer();
 window.addEventListener('resize', resizeRenderer);
