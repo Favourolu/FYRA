@@ -117,7 +117,10 @@ def handle_message(data):
     sentence_buf = ""
     emit("stream_start", {})
 
-    for chunk in assistant.respond_stream(text, ctx, _client):
+    def _on_tool(name, _inp):
+        emit("tool_use", {"tool": name})
+
+    for chunk in assistant.respond_stream(text, ctx, _client, on_tool_call=_on_tool):
         full_response += chunk
         sentence_buf += chunk
         emit("stream_chunk", {"text": chunk})

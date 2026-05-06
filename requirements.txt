@@ -6,3 +6,5 @@ flask
 flask-socketio
 simple-websocket
 gunicorn
+duckduckgo-search
+beautifulsoup4

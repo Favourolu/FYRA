@@ -15,7 +15,7 @@ const lastIntentEl = document.getElementById('lastIntent');
 // ── State ────────────────────────────────────────────────────
 let orbState = 'idle';
 let time = 0;
-const STATE_LABEL = { idle: 'standby', listening: 'listening', processing: 'thinking', speaking: 'speaking' };
+const STATE_LABEL = { idle: 'standby', listening: 'listening', processing: 'thinking', speaking: 'speaking', searching: 'browsing' };
 
 function setOrbState(state) {
     if (state === orbState) return;
@@ -119,7 +119,7 @@ function setTargets(state) {
         } else if (state === 'listening') {
             const r = 185 + Math.random() * 105;
             [x, y, z] = rndSphere(r);
-        } else if (state === 'processing') {
+        } else if (state === 'processing' || state === 'searching') {
             const r = 30 + Math.random() * 85;
             [x, y, z] = rndSphere(r);
         } else {
@@ -135,7 +135,7 @@ function animate() {
     requestAnimationFrame(animate);
     time += 0.016;
 
-    const speedMult = orbState === 'processing' ? 3.8 : orbState === 'speaking' ? 2 : 1;
+    const speedMult = orbState === 'processing' ? 3.8 : orbState === 'searching' ? 5 : orbState === 'speaking' ? 2 : 1;
     cloud.rotation.y += 0.0022 * speedMult;
 
     const pulse = orbState === 'speaking' ? 1 + Math.sin(time * 4.5) * 0.11 : 1;
@@ -334,8 +334,13 @@ socket.on('stream_start', () => {
 });
 
 socket.on('stream_chunk', data => {
+    if (orbState === 'searching') setOrbState('processing');
     streamingText += data.text;
     orbResponse.textContent = streamingText;
+});
+
+socket.on('tool_use', data => {
+    if (data.tool === 'web_search' || data.tool === 'fetch_page') setOrbState('searching');
 });
 
 socket.on('audio_chunk', data => {
