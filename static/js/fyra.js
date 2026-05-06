@@ -243,6 +243,7 @@ async function startVAD() {
         micBtn.textContent = 'STOP';
         micBtn.classList.add('active');
 
+
         // Start speech recognition
         if (recognition) recognition.start();
 
@@ -269,7 +270,7 @@ function stopVAD(sendResult = false) {
     if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
     if (vadStream)    { vadStream.getTracks().forEach(t => t.stop()); vadStream = null; }
     if (recognition && sendResult) recognition.stop();
-    micBtn.textContent = 'MUTE';
+    micBtn.textContent = 'MIC';
     micBtn.classList.remove('active');
     if (orbState === 'listening') setOrbState('idle');
 }
