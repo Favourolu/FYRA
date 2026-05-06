@@ -243,6 +243,17 @@ function typeWrite(el, text, i = 0) {
 
 // ── Audio ─────────────────────────────────────────────────────
 let activeAudio = null;
+let audioContext = null;
+
+// Safari requires audio context to be created/resumed on user gesture
+function ensureAudioContext() {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+}
 
 function playAudio(b64) {
     if (!b64) { setOrbState('idle'); return; }
@@ -252,8 +263,18 @@ function playAudio(b64) {
     const url = URL.createObjectURL(new Blob([arr], { type: 'audio/mpeg' }));
     if (activeAudio) { activeAudio.pause(); activeAudio = null; }
     activeAudio = new Audio(url);
+    activeAudio.playsInline = true;
     setOrbState('speaking');
-    activeAudio.play();
+    activeAudio.play().catch(() => {
+        // If autoplay blocked, wait for next user tap then play
+        const resume = () => {
+            activeAudio && activeAudio.play();
+            document.removeEventListener('touchstart', resume);
+            document.removeEventListener('click', resume);
+        };
+        document.addEventListener('touchstart', resume, { once: true });
+        document.addEventListener('click', resume, { once: true });
+    });
     activeAudio.onended = () => { URL.revokeObjectURL(url); setOrbState('idle'); };
 }
 
@@ -283,7 +304,8 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
 }
 
 micBtn.addEventListener('click', () => {
-    if (!recognition) { alert('Voice input requires Chrome.'); return; }
+    ensureAudioContext();
+    if (!recognition) { alert('Voice input requires Chrome or Safari.'); return; }
     orbState === 'listening' ? recognition.stop() : recognition.start();
 });
 
@@ -365,8 +387,10 @@ function addMessageInstant(text, sender) {
 }
 
 // ── Input ─────────────────────────────────────────────────────
-sendBtn.addEventListener('click', () => sendMessage(textInput.value));
-textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(textInput.value); });
+sendBtn.addEventListener('click', () => { ensureAudioContext(); sendMessage(textInput.value); });
+textInput.addEventListener('keydown', e => { if (e.key === 'Enter') { ensureAudioContext(); sendMessage(textInput.value); } });
+micBtn.addEventListener('touchstart', () => ensureAudioContext(), { passive: true });
+document.addEventListener('touchstart', () => ensureAudioContext(), { once: true, passive: true });
 
 // ── Clock ─────────────────────────────────────────────────────
 function tick() {
