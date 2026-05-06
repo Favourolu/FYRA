@@ -1,15 +1,15 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-    --primary: #00d4ff;
-    --secondary: #0044cc;
-    --accent: #aa44ff;
-    --bg: #03050f;
-    --panel-bg: rgba(0, 15, 40, 0.75);
-    --text: #8ecfea;
-    --text-dim: #2a5070;
-    --border: rgba(0, 180, 255, 0.15);
-    --glow: 0 0 12px rgba(0, 212, 255, 0.45);
+    --primary: #ffaa00;
+    --secondary: #ff6600;
+    --accent: #ff3300;
+    --bg: #080400;
+    --panel-bg: rgba(30, 12, 0, 0.78);
+    --text: #cc9940;
+    --text-dim: #5a3a10;
+    --border: rgba(255, 160, 0, 0.15);
+    --glow: 0 0 12px rgba(255, 160, 0, 0.45);
 }
 
 html, body {
@@ -26,8 +26,8 @@ body::before {
     position: fixed;
     inset: 0;
     background-image:
-        linear-gradient(rgba(0,180,255,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,180,255,0.03) 1px, transparent 1px);
+        linear-gradient(rgba(255,160,0,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,160,0,0.03) 1px, transparent 1px);
     background-size: 40px 40px;
     pointer-events: none;
     z-index: 0;
@@ -100,20 +100,20 @@ body::before {
 }
 
 .status-indicator.processing {
-    background: #ff8800;
-    box-shadow: 0 0 10px #ff8800;
+    background: #ff4400;
+    box-shadow: 0 0 10px #ff4400;
     animation: pulse-dot 0.4s infinite;
 }
 
 .status-indicator.listening {
-    background: #00ff88;
-    box-shadow: 0 0 10px #00ff88;
+    background: #ffdd00;
+    box-shadow: 0 0 10px #ffdd00;
     animation: pulse-dot 0.25s infinite;
 }
 
 .status-indicator.speaking {
-    background: var(--accent);
-    box-shadow: 0 0 10px var(--accent);
+    background: var(--primary);
+    box-shadow: 0 0 10px var(--primary);
     animation: pulse-dot 0.6s infinite;
 }
 
