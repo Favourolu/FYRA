@@ -37,14 +37,16 @@ def _local_ip() -> str:
 def _tts(text: str):
     api_key = os.getenv("FISH_AUDIO_API_KEY", "").strip()
     if not api_key:
+        print("[TTS] No FISH_AUDIO_API_KEY set — skipping voice")
         return None
     try:
         import requests
         import msgpack
-        voice_id = os.getenv("FISH_AUDIO_VOICE_ID", "").strip() or "2a9605eeafe84974b5b20628d42c0060"
+        voice_id = os.getenv("FISH_AUDIO_VOICE_ID", "").strip()
         payload = {"text": text, "format": "mp3", "latency": "normal"}
         if voice_id:
             payload["reference_id"] = voice_id
+        print(f"[TTS] Requesting voice | id={voice_id or '(default)'} | len={len(text)}")
         r = requests.post(
             "https://api.fish.audio/v1/tts",
             data=msgpack.packb(payload, use_bin_type=True),
@@ -55,10 +57,14 @@ def _tts(text: str):
             timeout=30,
             stream=True,
         )
-        r.raise_for_status()
+        if not r.ok:
+            print(f"[TTS] Error {r.status_code}: {r.text[:200]}")
+            return None
         audio_bytes = b"".join(r.iter_content(chunk_size=4096))
+        print(f"[TTS] OK — {len(audio_bytes)} bytes")
         return base64.b64encode(audio_bytes).decode("utf-8")
-    except Exception:
+    except Exception as e:
+        print(f"[TTS] Exception: {e}")
         return None
 
 
