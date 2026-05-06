@@ -1,7 +1,7 @@
 import json
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 
 from config import (
@@ -29,6 +29,9 @@ _DEFAULT_PROFILES = {
     },
 }
 
+CONVERSATION_FILE = LOGS_DIR / "conversation.json"
+MAX_CONVERSATION = 200
+
 
 def _init_files():
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
@@ -43,6 +46,9 @@ def _init_files():
     for path, default in defaults.items():
         if not path.exists():
             path.write_text(json.dumps(default, indent=2))
+
+    if not CONVERSATION_FILE.exists():
+        CONVERSATION_FILE.write_text("[]")
 
     log_path = LOGS_DIR / "interactions.log"
     if not log_path.exists():
@@ -93,7 +99,7 @@ def get_relevant_memory(intent: str, user_input: str) -> str:
                 lines.append(f"    {key.capitalize()}: {', '.join(str(i) for i in items)}")
         return "\n".join(lines)
 
-    if intent in ("retrieve_memory", "store_memory", "general_chat"):
+    if intent in ("retrieve_memory", "store_memory", "general_chat", "task_help"):
         favour_summary = _profile_summary("favour", mem["profiles"].get("favour", {}))
         fiyin_summary = _profile_summary("fiyin", mem["profiles"].get("fiyin", {}))
         sections.append("Profiles:\n" + favour_summary + "\n" + fiyin_summary)
@@ -120,14 +126,14 @@ def get_relevant_memory(intent: str, user_input: str) -> str:
             ]
             sections.append("Recent check-ins:\n" + "\n".join(checkin_lines))
 
-    if intent in ("suggest_action", "retrieve_memory"):
+    if intent in ("suggest_action", "retrieve_memory", "task_help"):
         open_plans = [p for p in mem["plans"] if p.get("status") != "done"][-MAX_MEMORY_ITEMS:]
         if open_plans:
             plan_lines = [
                 f"  [{p.get('type', '?')}] {p.get('title', '')} — {p.get('description', '')}"
                 for p in open_plans
             ]
-            sections.append("Plans & ideas:\n" + "\n".join(plan_lines))
+            sections.append("Plans & tasks:\n" + "\n".join(plan_lines))
 
     return "\n\n".join(sections) if sections else "No memory stored yet."
 
@@ -194,6 +200,95 @@ def apply_memory_update(extracted):
             "created_at": datetime.utcnow().isoformat(),
         })
         _write("plans.json", plans)
+
+
+# ── Conversation history ──────────────────────────────────────
+
+def load_conversation_history(limit: int = 30) -> list:
+    try:
+        data = json.loads(CONVERSATION_FILE.read_text())
+        return data[-limit:] if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def save_conversation_turn(user_text: str, fyra_text: str):
+    history = load_conversation_history(MAX_CONVERSATION)
+    history.append({
+        "timestamp": datetime.utcnow().isoformat(),
+        "user": user_text,
+        "fyra": fyra_text,
+    })
+    CONVERSATION_FILE.write_text(json.dumps(history[-MAX_CONVERSATION:], indent=2))
+
+
+def get_history_for_assistant(limit: int = 5) -> list:
+    """Return last N turns as Claude messages format for context injection."""
+    history = load_conversation_history(limit)
+    messages = []
+    for turn in history:
+        messages.append({"role": "user", "content": turn["user"]})
+        messages.append({"role": "assistant", "content": turn["fyra"]})
+    return messages
+
+
+# ── Live profile data for UI ──────────────────────────────────
+
+def get_profile_panel_data() -> dict:
+    profiles = _read("profiles.json")
+    favour = profiles.get("favour", {})
+    fiyin = profiles.get("fiyin", {})
+    plans = _read("plans.json")
+    open_tasks = [p for p in plans if p.get("status") != "done"]
+
+    return {
+        "favour": {
+            "name": favour.get("full_name", "Favour"),
+            "birthday": favour.get("birthday", "—"),
+            "likes": favour.get("likes", [])[:3],
+            "facts": favour.get("facts", [])[:2],
+        },
+        "fiyin": {
+            "name": fiyin.get("full_name", "Fiyin"),
+            "birthday": fiyin.get("birthday", "—"),
+            "likes": fiyin.get("likes", [])[:3],
+            "facts": fiyin.get("facts", [])[:2],
+        },
+        "open_tasks": len(open_tasks),
+    }
+
+
+# ── Startup reminders ─────────────────────────────────────────
+
+def get_startup_brief() -> str:
+    """Return a brief for Fyra to deliver on startup. Empty string = nothing to say."""
+    mem = load_all()
+    today = date.today()
+    alerts = []
+
+    for event in mem["events"]:
+        event_date_str = event.get("date")
+        if not event_date_str:
+            continue
+        try:
+            event_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
+            # Check anniversary this year
+            this_year = event_date.replace(year=today.year)
+            days_until = (this_year - today).days
+            if 0 <= days_until <= 7:
+                label = "today" if days_until == 0 else f"in {days_until} day{'s' if days_until > 1 else ''}"
+                alerts.append(f"{event.get('title', 'an event')} is {label}")
+        except Exception:
+            continue
+
+    open_plans = [p for p in mem["plans"] if p.get("status") in ("idea", "planned")]
+    if open_plans:
+        alerts.append(f"{len(open_plans)} open task{'s' if len(open_plans) > 1 else ''} pending")
+
+    if not alerts:
+        return ""
+
+    return "Quick brief: " + "; ".join(alerts) + "."
 
 
 def log_interaction(user_input: str, intent: str, response: str):

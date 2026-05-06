@@ -207,6 +207,57 @@ body::before {
     font-size: 10px;
 }
 
+.profile-block { margin-bottom: 6px; }
+
+.profile-name {
+    font-family: 'Orbitron', monospace;
+    font-size: 10px;
+    color: var(--primary);
+    letter-spacing: 3px;
+    margin-bottom: 4px;
+}
+
+.profile-detail {
+    font-size: 9px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    letter-spacing: 0.5px;
+}
+
+.voice-input-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.voice-input-row input {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    padding: 4px 6px;
+    outline: none;
+    letter-spacing: 1px;
+}
+
+.voice-input-row button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--primary);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    padding: 4px 8px;
+    cursor: pointer;
+    letter-spacing: 1px;
+}
+
+.voice-input-row button:hover {
+    background: rgba(255,160,0,0.1);
+    border-color: var(--primary);
+}
+
 .divider {
     height: 1px;
     background: var(--border);

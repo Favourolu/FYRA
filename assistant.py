@@ -11,6 +11,22 @@ from config import (
 )
 
 _history: list[dict] = []
+_history_loaded = False
+
+
+def load_history_from_disk():
+    """Seed in-memory history from saved conversation on first use."""
+    global _history, _history_loaded
+    if _history_loaded:
+        return
+    _history_loaded = True
+    try:
+        from memory import get_history_for_assistant
+        prior = get_history_for_assistant(limit=6)
+        if prior:
+            _history = prior
+    except Exception:
+        pass
 
 
 def build_system_prompt(memory_context: str) -> str:
@@ -22,6 +38,7 @@ def build_system_prompt(memory_context: str) -> str:
 
 def respond(user_input: str, memory_context: str, client) -> str:
     global _history
+    load_history_from_disk()
 
     _history.append({"role": "user", "content": user_input})
 

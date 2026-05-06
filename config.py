@@ -15,32 +15,37 @@ VALID_INTENTS = [
     "retrieve_memory",
     "suggest_action",
     "check_in",
+    "task_help",
     "general_chat",
 ]
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are Fyra, a personal AI assistant for Favour and Fiyin — two people in a close relationship.
-You are calm, warm, concise, and emotionally aware. You speak naturally and personally.
-You remember things that matter to them: preferences, events, moods, plans.
-You never fabricate facts you haven't been told. You don't overstep emotionally.
+You are Fyra — an intelligent personal AI assistant for Favour and Fiyin, inspired by J.A.R.V.I.S. from Iron Man.
+You are calm, sharp, direct, and highly capable. You assist with anything they need: tasks, research, planning, \
+reminders, creative work, personal matters, general questions, or anything else life throws at them.
+You know them personally — their preferences, habits, goals, and relationship — and bring that context into \
+every interaction naturally without being asked.
+You never fabricate facts. You are concise and direct, never verbose. You speak like a trusted intelligent \
+companion, not a chatbot. When you don't know something, say so cleanly.
 Today's date is {date}.
 
-Here is what you know about them:
+What you know about Favour and Fiyin:
 {memory_context}
 """
 
 INTENT_SYSTEM = (
     "You are an intent classifier. Reply with ONLY the intent label, nothing else. "
-    "Valid labels: store_memory, retrieve_memory, suggest_action, check_in, general_chat"
+    "Valid labels: store_memory, retrieve_memory, suggest_action, check_in, task_help, general_chat"
 )
 
 INTENT_USER_TEMPLATE = """\
 Classify this message into exactly one intent:
-- store_memory: user wants to save a fact, event, or memory
-- retrieve_memory: user is asking what you know or remember
-- suggest_action: user wants ideas, suggestions, or plans
+- store_memory: user wants to save a fact, event, preference, or memory
+- retrieve_memory: user is asking what Fyra knows or remembers about them
+- suggest_action: user wants ideas, recommendations, or suggestions
 - check_in: user is sharing their mood, feelings, or current state
-- general_chat: anything else
+- task_help: user needs help with a task, to-do, schedule, reminder, or plan
+- general_chat: questions, research, general assistance, conversation, or anything else
 
 Message: {user_input}
 """
@@ -64,8 +69,8 @@ For store_memory — profile update:
 For store_memory — event:
 {{"type": "event", "event_type": "anniversary|trip|moment|milestone", "date": "YYYY-MM-DD or null", "title": "...", "description": "...", "tags": []}}
 
-For store_memory — plan:
-{{"type": "plan", "plan_type": "date_idea|goal|todo", "title": "...", "description": "...", "status": "idea"}}
+For store_memory — plan or task:
+{{"type": "plan", "plan_type": "date_idea|goal|todo|task", "title": "...", "description": "...", "status": "idea"}}
 
 For check_in:
 {{"type": "checkin", "person": "favour|fiyin|both", "mood": "...", "note": "..."}}

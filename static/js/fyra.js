@@ -287,15 +287,82 @@ micBtn.addEventListener('click', () => {
     orbState === 'listening' ? recognition.stop() : recognition.start();
 });
 
-// ── SocketIO ──────────────────────────────────────────────────
+// ── SocketIO events ───────────────────────────────────────────
 socket.on('fyra_response', data => {
     addMessage(data.text, 'fyra');
-    if (data.intent) lastIntentEl.textContent = data.intent.replace('_', ' ').toUpperCase();
+    if (data.intent) lastIntentEl.textContent = data.intent.replace(/_/g, ' ').toUpperCase();
     data.audio ? playAudio(data.audio) : setOrbState('idle');
 });
+
 socket.on('status',     data => setOrbState(data.state));
 socket.on('connect',    ()   => setOrbState('idle'));
 socket.on('disconnect', ()   => statusText.textContent = 'OFFLINE');
+
+socket.on('profile_update', data => {
+    const f = data.favour || {};
+    const fi = data.fiyin  || {};
+
+    document.getElementById('favourName').textContent =
+        (f.name || 'FAVOUR').toUpperCase();
+    document.getElementById('favourLikes').textContent =
+        f.likes && f.likes.length ? f.likes.join(', ') : '—';
+
+    document.getElementById('fiyinName').textContent =
+        (fi.name || 'FIYIN').toUpperCase();
+    document.getElementById('fiyinLikes').textContent =
+        fi.likes && fi.likes.length ? fi.likes.join(', ') : '—';
+
+    document.getElementById('openTasks').textContent =
+        data.open_tasks > 0 ? `${data.open_tasks} OPEN` : 'NONE';
+});
+
+socket.on('conversation_history', data => {
+    const history = data.history || [];
+    // Remove default welcome message first
+    convLog.innerHTML = '';
+    history.forEach(turn => {
+        addMessageInstant(turn.user, 'user');
+        addMessageInstant(turn.fyra, 'fyra');
+    });
+    // Re-add welcome if history was empty
+    if (history.length === 0) {
+        addMessageInstant("Systems online. I'm ready, Favour — what do you need?", 'fyra');
+    }
+    convLog.scrollTop = convLog.scrollHeight;
+});
+
+socket.on('startup_brief', data => {
+    if (data.text) {
+        addMessage(data.text, 'fyra');
+        if (data.audio) playAudio(data.audio);
+    }
+});
+
+socket.on('voice_set', data => {
+    const el = document.getElementById('voiceStatus');
+    el.textContent = data.voice_id ? data.voice_id.slice(0, 20) + '...' : 'DEFAULT';
+});
+
+// ── Voice setting ─────────────────────────────────────────────
+document.getElementById('voiceSetBtn').addEventListener('click', () => {
+    const voiceId = document.getElementById('voiceIdInput').value.trim();
+    socket.emit('set_voice', { voice_id: voiceId });
+});
+
+// ── Add message without typewriter (for history restore) ──────
+function addMessageInstant(text, sender) {
+    const div   = document.createElement('div');
+    div.className = `message ${sender}-message`;
+    const label = document.createElement('span');
+    label.className = 'msg-label';
+    label.textContent = sender === 'fyra' ? 'FYRA' : 'YOU';
+    const msg = document.createElement('span');
+    msg.className = 'msg-text';
+    msg.textContent = text;
+    div.appendChild(label);
+    div.appendChild(msg);
+    convLog.appendChild(div);
+}
 
 // ── Input ─────────────────────────────────────────────────────
 sendBtn.addEventListener('click', () => sendMessage(textInput.value));
