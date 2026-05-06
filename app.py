@@ -41,7 +41,7 @@ def _tts(text: str):
     try:
         import requests
         import msgpack
-        voice_id = os.getenv("FISH_AUDIO_VOICE_ID", "").strip() or None
+        voice_id = os.getenv("FISH_AUDIO_VOICE_ID", "").strip() or "2a9605eeafe84974b5b20628d42c0060"
         payload = {"text": text, "format": "mp3", "latency": "normal"}
         if voice_id:
             payload["reference_id"] = voice_id
