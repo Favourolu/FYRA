@@ -42,9 +42,9 @@ const STATE_LABEL  = { idle: 'STANDBY', listening: 'LISTENING', processing: 'PRO
 const STATUS_LABEL = { idle: 'READY',   listening: 'LISTENING', processing: 'THINKING',   speaking: 'RESPONDING' };
 
 // ── Sphere node network ───────────────────────────────────────
-const SPHERE_R    = 148;
+const SPHERE_R    = 200;
 const NODE_COUNT  = 88;
-const CONN_DIST   = 68;   // max 3D distance for a connection
+const CONN_DIST   = 90;   // max 3D distance for a connection
 const MAX_CONN    = 5;    // max connections per node
 
 // Fibonacci-distributed nodes on sphere surface

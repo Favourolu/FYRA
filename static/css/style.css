@@ -316,8 +316,10 @@ body::before {
 }
 
 #orbCanvas {
-    max-width: min(480px, 90vw);
-    max-height: calc(100vh - 200px);
+    max-width: min(580px, 90vw);
+    max-height: calc(100vh - 180px);
+    width: 580px;
+    height: 580px;
 }
 
 .orb-response {
@@ -434,48 +436,23 @@ body::before {
 
 /* ── Mobile ── */
 @media (max-width: 768px) {
-    html, body { overflow: auto; }
-
-    .ui-container { height: auto; min-height: 100vh; }
-
     .hud-header {
-        padding: 12px 16px;
+        padding: 10px 16px;
         flex-wrap: wrap;
-        gap: 8px;
+        gap: 6px;
     }
 
-    .logo-text { font-size: 16px; letter-spacing: 6px; }
-
-    .main-content {
-        flex-direction: column;
-        padding: 12px;
-        gap: 12px;
-        overflow: visible;
-    }
-
-    .side-panel {
-        width: 100%;
-        flex-shrink: unset;
-    }
-
-    .left-panel { order: 3; }
-
-    .orb-container {
-        order: 1;
-        height: 280px;
-    }
+    .logo-text { font-size: 15px; letter-spacing: 6px; }
 
     #orbCanvas {
-        width: 280px !important;
-        height: 280px !important;
+        width: 340px !important;
+        height: 340px !important;
     }
 
-    .right-panel {
-        order: 2;
-        height: 260px;
+    .orb-response {
+        font-size: 11px;
+        padding: 0 16px;
     }
 
     .input-area { padding: 12px 16px; }
-
-    .voice-input-row input { font-size: 11px; }
 }
