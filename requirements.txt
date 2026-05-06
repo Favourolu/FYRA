@@ -4,5 +4,5 @@ msgpack
 requests
 flask
 flask-socketio
-eventlet
+simple-websocket
 gunicorn

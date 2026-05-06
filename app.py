@@ -1,6 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
-
 import os
 import base64
 import socket as _socket
@@ -21,7 +18,7 @@ import memory as memory_module
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.urandom(24)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
