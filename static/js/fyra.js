@@ -3,7 +3,6 @@ const socket = io();
 
 // ── DOM ──────────────────────────────────────────────────────
 const canvas       = document.getElementById('orbCanvas');
-const ctx          = canvas.getContext('2d');
 const textInput    = document.getElementById('textInput');
 const sendBtn      = document.getElementById('sendBtn');
 const micBtn       = document.getElementById('micBtn');
@@ -13,341 +12,361 @@ const orbResponse  = document.getElementById('orbResponse');
 const convLog      = document.getElementById('conversationLog');
 const lastIntentEl = document.getElementById('lastIntent');
 
+// ── State ────────────────────────────────────────────────────
+let orbState = 'idle';
+let time = 0;
+const STATE_LABEL = { idle: 'standby', listening: 'listening', processing: 'thinking', speaking: 'speaking' };
+
+function setOrbState(state) {
+    if (state === orbState) return;
+    orbState = state;
+    orbStateText.textContent = STATE_LABEL[state] || state;
+    statusDot.className = 'status-indicator ' + (state !== 'idle' ? state : '');
+    setTargets(state);
+}
+
+// ── Response display ─────────────────────────────────────────
 let responseFadeTimer = null;
+let streamingText = '';
 
 function showResponse(text) {
     if (responseFadeTimer) clearTimeout(responseFadeTimer);
     orbResponse.textContent = text;
     orbResponse.classList.add('visible');
-    // Fade out after 12 seconds
-    responseFadeTimer = setTimeout(() => {
-        orbResponse.classList.remove('visible');
-    }, 12000);
+    responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 15000);
 }
 
-// ── State ────────────────────────────────────────────────────
-let orbState = 'idle';
-let time = 0;
+// ── Three.js Particle Orb ─────────────────────────────────────
+const scene    = new THREE.Scene();
+const camera   = new THREE.PerspectiveCamera(55, 1, 1, 3000);
+camera.position.set(0, 0, 580);
 
-const STATE_LABEL  = { idle: 'STANDBY', listening: 'LISTENING', processing: 'THINKING', speaking: 'SPEAKING' };
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-// ── Particle System ───────────────────────────────────────────
-const N = 1600;
-const pts = Array.from({ length: N }, () => ({
-    x: (Math.random() - 0.5) * 500,
-    y: (Math.random() - 0.5) * 500,
-    z: (Math.random() - 0.5) * 500,
-    tx: 0, ty: 0, tz: 0,
-    phase: Math.random() * Math.PI * 2,
-    spd:  0.016 + Math.random() * 0.022,
-    sz:   Math.random() * 1.4 + 0.4,
-    op:   0.35 + Math.random() * 0.65,
-}));
+function resizeRenderer() {
+    const sz = Math.min(window.innerWidth, window.innerHeight - 120);
+    renderer.setSize(sz, sz);
+}
+resizeRenderer();
+window.addEventListener('resize', resizeRenderer);
 
-let cloudRotY = 0;
+// Centre glow sprite
+const glowTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0,   'rgba(60,140,255,0.6)');
+    grad.addColorStop(0.4, 'rgba(20,80,200,0.2)');
+    grad.addColorStop(1,   'rgba(0,0,0,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(c);
+})();
+const glowSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, transparent: true, depthWrite: false }));
+glowSprite.scale.set(260, 260, 1);
+scene.add(glowSprite);
+
+// ── Particles ────────────────────────────────────────────────
+const COUNT  = 6000;
+const posArr = new Float32Array(COUNT * 3);
+const colArr = new Float32Array(COUNT * 3);
+const tgtArr = new Float32Array(COUNT * 3);
+const spdArr = new Float32Array(COUNT);
+const phsArr = new Float32Array(COUNT);
+
+for (let i = 0; i < COUNT; i++) {
+    const j = i * 3;
+    posArr[j]   = (Math.random() - 0.5) * 600;
+    posArr[j+1] = (Math.random() - 0.5) * 600;
+    posArr[j+2] = (Math.random() - 0.5) * 600;
+    spdArr[i] = 0.013 + Math.random() * 0.02;
+    phsArr[i] = Math.random() * Math.PI * 2;
+}
+
+const geo = new THREE.BufferGeometry();
+geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+geo.setAttribute('color',    new THREE.BufferAttribute(colArr, 3));
+
+const mat = new THREE.PointsMaterial({
+    size: 1.8,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.88,
+    sizeAttenuation: true,
+    depthWrite: false,
+});
+
+const cloud = new THREE.Points(geo, mat);
+scene.add(cloud);
 
 function rndSphere(r) {
-    const u = Math.random(), v = Math.random();
-    const th = 2 * Math.PI * u;
-    const ph = Math.acos(2 * v - 1);
-    return {
-        x: Math.sin(ph) * Math.cos(th) * r,
-        y: Math.sin(ph) * Math.sin(th) * r,
-        z: Math.cos(ph) * r,
-    };
+    const u = Math.random() * Math.PI * 2;
+    const v = Math.acos(2 * Math.random() - 1);
+    return [Math.sin(v) * Math.cos(u) * r, Math.sin(v) * Math.sin(u) * r, Math.cos(v) * r];
 }
 
 function setTargets(state) {
-    pts.forEach(p => {
-        let t;
+    for (let i = 0; i < COUNT; i++) {
+        const j = i * 3;
+        let x, y, z;
         if (state === 'idle') {
-            // Elongated horizontal capsule — the galaxy shape
-            const r = 90 + Math.random() * 75;
-            const s = rndSphere(r);
-            t = { x: s.x * 2.2, y: s.y * 0.6, z: s.z * 0.8 };
+            const r = 90 + Math.random() * 70;
+            const [sx, sy, sz] = rndSphere(r);
+            x = sx * 2.2; y = sy * 0.58; z = sz * 0.82;
         } else if (state === 'listening') {
-            // Large scattered cloud
-            const r = 170 + Math.random() * 110;
-            t = rndSphere(r);
+            const r = 185 + Math.random() * 105;
+            [x, y, z] = rndSphere(r);
         } else if (state === 'processing') {
-            // Dense compressed brain cluster
-            const r = 35 + Math.random() * 85;
-            t = rndSphere(r);
+            const r = 30 + Math.random() * 85;
+            [x, y, z] = rndSphere(r);
         } else {
-            // Speaking — medium sphere
             const r = 80 + Math.random() * 80;
-            t = rndSphere(r);
+            [x, y, z] = rndSphere(r);
         }
-        p.tx = t.x; p.ty = t.y; p.tz = t.z;
-    });
+        tgtArr[j] = x; tgtArr[j+1] = y; tgtArr[j+2] = z;
+    }
 }
-
-// Initialise targets
 setTargets('idle');
 
-// ── Set state ─────────────────────────────────────────────────
-function setOrbState(state) {
-    if (state === orbState) return;
-    orbState = state;
-    orbStateText.textContent = STATE_LABEL[state];
-    statusDot.className = 'status-indicator ' + (state !== 'idle' ? state : '');
-    setTargets(state);
-}
-
-// ── Draw ──────────────────────────────────────────────────────
-function drawOrb() {
-    const W = canvas.width, H = canvas.height;
-    const cx = W / 2, cy = H / 2;
-    ctx.clearRect(0, 0, W, H);
+function animate() {
+    requestAnimationFrame(animate);
     time += 0.016;
 
-    const speedMult = orbState === 'processing' ? 3.5 : orbState === 'speaking' ? 2 : 1;
-    cloudRotY += 0.0025 * speedMult;
+    const speedMult = orbState === 'processing' ? 3.8 : orbState === 'speaking' ? 2 : 1;
+    cloud.rotation.y += 0.0022 * speedMult;
 
-    const pulse = orbState === 'speaking'
-        ? 1 + Math.sin(time * 4.5) * 0.12
-        : orbState === 'listening'
-        ? 1 + Math.sin(time * 1.8) * 0.04
-        : 1 + Math.sin(time * 0.9) * 0.02;
+    const pulse = orbState === 'speaking' ? 1 + Math.sin(time * 4.5) * 0.11 : 1;
+    const drift = orbState === 'processing' ? 1.8 : 0.55;
 
-    // Center glow
-    const glowR = orbState === 'processing' ? 75 : orbState === 'listening' ? 130 : 95;
-    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR * pulse);
-    glow.addColorStop(0,   'rgba(0,140,255,0.28)');
-    glow.addColorStop(0.45,'rgba(0,100,220,0.12)');
-    glow.addColorStop(1,   'transparent');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(cx, cy, glowR * pulse * 1.6, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Rotate + project particles
-    const cy_ = Math.cos(cloudRotY), sy_ = Math.sin(cloudRotY);
-    const fov = 520;
-
-    pts.forEach(p => {
+    for (let i = 0; i < COUNT; i++) {
+        const j = i * 3;
         // Lerp toward target
-        p.x += (p.tx - p.x) * p.spd;
-        p.y += (p.ty - p.y) * p.spd;
-        p.z += (p.tz - p.z) * p.spd;
-
+        posArr[j]   += (tgtArr[j]   - posArr[j])   * spdArr[i];
+        posArr[j+1] += (tgtArr[j+1] - posArr[j+1]) * spdArr[i];
+        posArr[j+2] += (tgtArr[j+2] - posArr[j+2]) * spdArr[i];
         // Organic drift
-        const d = orbState === 'processing' ? 1.6 : 0.5;
-        p.x += Math.sin(time * 0.5 + p.phase) * d;
-        p.y += Math.cos(time * 0.38 + p.phase * 1.2) * d;
+        posArr[j]   += Math.sin(time * 0.48 + phsArr[i]) * drift;
+        posArr[j+1] += Math.cos(time * 0.37 + phsArr[i] * 1.3) * drift;
 
-        // Rotate around Y
-        const rx =  p.x * cy_ + p.z * sy_;
-        const rz = -p.x * sy_ + p.z * cy_;
-        const ry =  p.y;
-
-        // Perspective project
-        const scale = fov / (fov + rz + 200);
-        const sx = cx + rx * scale * pulse;
-        const sy = cy + ry * scale * pulse;
-        const depth = Math.max(0, (rz + 280) / 560);
-
-        const size = Math.max(0.5, p.sz * scale * pulse);
-        const alpha = p.op * (0.1 + 0.9 * depth);
-
-        const bright = depth > 0.72;
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = bright ? '#ffffff' : depth > 0.45 ? '#55bbff' : '#1166cc';
-        ctx.fillRect(sx - size * 0.5, sy - size * 0.5, size, size);
-    });
-
-    ctx.globalAlpha = 1;
-    requestAnimationFrame(drawOrb);
-}
-
-
-// ── Conversation ──────────────────────────────────────────────
-function addMessage(text, sender) {
-    const div   = document.createElement('div');
-    div.className = `message ${sender}-message`;
-    const label = document.createElement('span');
-    label.className = 'msg-label';
-    label.textContent = sender === 'fyra' ? 'FYRA' : 'YOU';
-    const msg = document.createElement('span');
-    msg.className = 'msg-text';
-    div.appendChild(label);
-    div.appendChild(msg);
-    convLog.appendChild(div);
-    convLog.scrollTop = convLog.scrollHeight;
-    sender === 'fyra' ? typeWrite(msg, text) : (msg.textContent = text);
-}
-
-function typeWrite(el, text, i = 0) {
-    if (i < text.length) {
-        el.textContent += text[i];
-        convLog.scrollTop = convLog.scrollHeight;
-        setTimeout(() => typeWrite(el, text, i + 1), 16);
+        // Depth-based colour: deep blue → cyan → white
+        const depth = Math.max(0, Math.min(1, (posArr[j+2] + 300) / 600));
+        colArr[j]   = 0.05 + depth * 0.55;
+        colArr[j+1] = 0.25 + depth * 0.55;
+        colArr[j+2] = 0.65 + depth * 0.35;
     }
-}
 
-// ── Audio ─────────────────────────────────────────────────────
-let activeSource = null;
-let audioContext = null;
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate    = true;
+
+    cloud.scale.setScalar(pulse);
+    glowSprite.scale.set(260 * pulse, 260 * pulse, 1);
+
+    renderer.render(scene, camera);
+}
+animate();
+
+// ── Audio queue (for streaming TTS) ──────────────────────────
+let audioQueue    = [];
+let isPlayingAudio = false;
+let activeSource  = null;
+let audioContext  = null;
 
 function ensureAudioContext() {
-    if (!audioContext) {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (audioContext.state === 'suspended') {
-        audioContext.resume();
-    }
+    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioContext.state === 'suspended') audioContext.resume();
 }
 
-function playAudio(b64) {
-    if (!b64) { setOrbState('idle'); return; }
+function playNextChunk() {
+    if (audioQueue.length === 0) {
+        isPlayingAudio = false;
+        if (orbState === 'speaking') setOrbState('idle');
+        return;
+    }
+    isPlayingAudio = true;
+    const b64 = audioQueue.shift();
+    if (!b64) { playNextChunk(); return; }
 
-    // Decode base64 → ArrayBuffer
     const binary = atob(b64);
     const buf = new ArrayBuffer(binary.length);
     const view = new Uint8Array(buf);
     for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
 
     ensureAudioContext();
+    if (activeSource) { try { activeSource.stop(); } catch (_) {} activeSource = null; }
 
-    // Stop any currently playing audio
-    if (activeSource) {
-        try { activeSource.stop(); } catch (_) {}
-        activeSource = null;
-    }
-
-    // Decode and play via AudioContext (works in Safari)
-    audioContext.decodeAudioData(buf, (decoded) => {
+    audioContext.decodeAudioData(buf, decoded => {
         const src = audioContext.createBufferSource();
         src.buffer = decoded;
         src.connect(audioContext.destination);
         setOrbState('speaking');
         src.start(0);
-        src.onended = () => { activeSource = null; setOrbState('idle'); };
+        src.onended = () => { activeSource = null; playNextChunk(); };
         activeSource = src;
-    }, (err) => {
-        console.error('[Audio] Decode failed:', err);
-        setOrbState('idle');
+    }, err => {
+        console.error('[Audio] decode error:', err);
+        playNextChunk();
     });
 }
+
+// ── WebRTC VAD ────────────────────────────────────────────────
+let vadStream    = null;
+let vadAnalyser  = null;
+let vadMonitor   = null;
+let silenceTimer = null;
+let vadActive    = false;
+
+const VAD_THRESHOLD    = 0.012; // RMS voice threshold
+const SILENCE_MS       = 1600;  // stop after 1.6s silence
+
+function getRMS(analyser) {
+    const buf = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let s of buf) sum += s * s;
+    return Math.sqrt(sum / buf.length);
+}
+
+async function startVAD() {
+    if (vadActive) return;
+    ensureAudioContext();
+    try {
+        vadStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        const source = audioContext.createMediaStreamSource(vadStream);
+        vadAnalyser = audioContext.createAnalyser();
+        vadAnalyser.fftSize = 512;
+        source.connect(vadAnalyser);
+        vadActive = true;
+
+        setOrbState('listening');
+        micBtn.textContent = 'STOP';
+        micBtn.classList.add('active');
+
+        // Start speech recognition
+        if (recognition) recognition.start();
+
+        // Monitor silence
+        function monitor() {
+            if (!vadActive) return;
+            const rms = getRMS(vadAnalyser);
+            if (rms > VAD_THRESHOLD) {
+                if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+            } else if (!silenceTimer) {
+                silenceTimer = setTimeout(() => stopVAD(true), SILENCE_MS);
+            }
+            vadMonitor = requestAnimationFrame(monitor);
+        }
+        monitor();
+    } catch (e) {
+        console.error('[VAD] mic error:', e);
+    }
+}
+
+function stopVAD(sendResult = false) {
+    vadActive = false;
+    if (vadMonitor)   { cancelAnimationFrame(vadMonitor); vadMonitor = null; }
+    if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+    if (vadStream)    { vadStream.getTracks().forEach(t => t.stop()); vadStream = null; }
+    if (recognition && sendResult) recognition.stop();
+    micBtn.textContent = 'MUTE';
+    micBtn.classList.remove('active');
+    if (orbState === 'listening') setOrbState('idle');
+}
+
+// Speech recognition
+let recognition = null;
+let partialTranscript = '';
+
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SR();
+    recognition.continuous    = true;
+    recognition.interimResults = true;
+    recognition.lang          = 'en-US';
+
+    recognition.onresult = e => {
+        let interim = '';
+        let final   = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+            const t = e.results[i][0].transcript;
+            e.results[i].isFinal ? (final += t) : (interim += t);
+        }
+        partialTranscript = interim;
+        // Reset silence timer on any speech activity
+        if ((interim || final) && silenceTimer) {
+            clearTimeout(silenceTimer);
+            silenceTimer = null;
+        }
+        if (final) {
+            stopVAD(false);
+            sendMessage(final.trim());
+        }
+    };
+
+    recognition.onerror = () => stopVAD(false);
+    recognition.onend   = () => { if (vadActive) recognition.start(); };
+}
+
+micBtn.addEventListener('click', () => {
+    ensureAudioContext();
+    vadActive ? stopVAD(true) : startVAD();
+});
 
 // ── Send ──────────────────────────────────────────────────────
 function sendMessage(text) {
     text = text.trim();
     if (!text) return;
+    ensureAudioContext();
     setOrbState('processing');
     socket.emit('user_message', { text });
     textInput.value = '';
 }
 
-// ── Voice ─────────────────────────────────────────────────────
-let recognition = null;
+// ── SocketIO events ───────────────────────────────────────────
+socket.on('stream_start', () => {
+    streamingText = '';
+    if (responseFadeTimer) clearTimeout(responseFadeTimer);
+    orbResponse.textContent = '';
+    orbResponse.classList.add('visible');
+});
 
-if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SR();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-    recognition.onstart  = () => { setOrbState('listening'); micBtn.classList.add('active'); };
-    recognition.onresult = e  => { micBtn.classList.remove('active'); sendMessage(e.results[0][0].transcript); };
-    recognition.onerror  = () => { micBtn.classList.remove('active'); setOrbState('idle'); };
-    recognition.onend    = () => micBtn.classList.remove('active');
-}
+socket.on('stream_chunk', data => {
+    streamingText += data.text;
+    orbResponse.textContent = streamingText;
+});
 
-let muted = false;
-micBtn.addEventListener('click', () => {
-    ensureAudioContext();
-    if (!recognition) return;
-    if (orbState === 'listening') {
-        recognition.stop();
-        micBtn.textContent = 'MUTE';
-        micBtn.classList.remove('active');
-    } else {
-        recognition.start();
-        micBtn.textContent = 'STOP';
-        micBtn.classList.add('active');
+socket.on('audio_chunk', data => {
+    if (data.audio) {
+        audioQueue.push(data.audio);
+        if (!isPlayingAudio) playNextChunk();
     }
 });
 
-// ── SocketIO events ───────────────────────────────────────────
-socket.on('fyra_response', data => {
-    showResponse(data.text);
-    if (data.intent) lastIntentEl.textContent = data.intent.replace(/_/g, ' ').toUpperCase();
-    data.audio ? playAudio(data.audio) : setOrbState('idle');
+socket.on('stream_end', data => {
+    if (data.intent) lastIntentEl.textContent = data.intent;
+    responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 15000);
+    if (!isPlayingAudio && audioQueue.length === 0) setOrbState('idle');
 });
 
-socket.on('status',     data => setOrbState(data.state));
-socket.on('connect',    ()   => { setOrbState('idle'); document.getElementById('connText').textContent = 'connected'; });
-socket.on('disconnect', ()   => { document.getElementById('connText').textContent = 'offline'; statusDot.className = 'status-indicator'; statusDot.style.background = '#ff4444'; });
+socket.on('status', data => setOrbState(data.state));
+socket.on('connect',    () => { setOrbState('idle'); document.getElementById('connText').textContent = 'connected'; });
+socket.on('disconnect', () => { document.getElementById('connText').textContent = 'offline'; });
 
 socket.on('profile_update', data => {
-    const f = data.favour || {};
-    const fi = data.fiyin  || {};
-
-    document.getElementById('favourName').textContent =
-        (f.name || 'FAVOUR').toUpperCase();
-    document.getElementById('favourLikes').textContent =
-        f.likes && f.likes.length ? f.likes.join(', ') : '—';
-
-    document.getElementById('fiyinName').textContent =
-        (fi.name || 'FIYIN').toUpperCase();
-    document.getElementById('fiyinLikes').textContent =
-        fi.likes && fi.likes.length ? fi.likes.join(', ') : '—';
-
-    document.getElementById('openTasks').textContent =
-        data.open_tasks > 0 ? `${data.open_tasks} OPEN` : 'NONE';
+    const f = data.favour || {}, fi = data.fiyin || {};
+    document.getElementById('favourName').textContent  = (f.name  || 'FAVOUR').toUpperCase();
+    document.getElementById('favourLikes').textContent = f.likes?.length  ? f.likes.join(', ')  : '—';
+    document.getElementById('fiyinName').textContent   = (fi.name || 'FIYIN').toUpperCase();
+    document.getElementById('fiyinLikes').textContent  = fi.likes?.length ? fi.likes.join(', ') : '—';
+    document.getElementById('openTasks').textContent   = data.open_tasks > 0 ? `${data.open_tasks} OPEN` : 'NONE';
 });
 
-socket.on('conversation_history', data => {
-    const history = data.history || [];
-    // Remove default welcome message first
-    convLog.innerHTML = '';
-    history.forEach(turn => {
-        addMessageInstant(turn.user, 'user');
-        addMessageInstant(turn.fyra, 'fyra');
-    });
-    // Re-add welcome if history was empty
-    if (history.length === 0) {
-        addMessageInstant("Systems online. I'm ready, Favour — what do you need?", 'fyra');
-    }
-    convLog.scrollTop = convLog.scrollHeight;
-});
-
-socket.on('startup_brief', data => {
-    if (data.text) showResponse(data.text);
-});
-
-socket.on('voice_set', data => {
-    const el = document.getElementById('voiceStatus');
-    el.textContent = data.voice_id ? data.voice_id.slice(0, 20) + '...' : 'DEFAULT';
-});
-
-// ── Voice setting ─────────────────────────────────────────────
-document.getElementById('voiceSetBtn').addEventListener('click', () => {
-    const voiceId = document.getElementById('voiceIdInput').value.trim();
-    socket.emit('set_voice', { voice_id: voiceId });
-});
-
-// ── Add message without typewriter (for history restore) ──────
-function addMessageInstant(text, sender) {
-    const div   = document.createElement('div');
-    div.className = `message ${sender}-message`;
-    const label = document.createElement('span');
-    label.className = 'msg-label';
-    label.textContent = sender === 'fyra' ? 'FYRA' : 'YOU';
-    const msg = document.createElement('span');
-    msg.className = 'msg-text';
-    msg.textContent = text;
-    div.appendChild(label);
-    div.appendChild(msg);
-    convLog.appendChild(div);
-}
+socket.on('conversation_history', () => {});
+socket.on('startup_brief', data => { if (data.text) showResponse(data.text); });
+socket.on('voice_set', () => {});
 
 // ── Input ─────────────────────────────────────────────────────
-sendBtn.addEventListener('click', () => { ensureAudioContext(); sendMessage(textInput.value); });
-textInput.addEventListener('keydown', e => { if (e.key === 'Enter') { ensureAudioContext(); sendMessage(textInput.value); } });
-micBtn.addEventListener('touchstart', () => ensureAudioContext(), { passive: true });
+sendBtn.addEventListener('click', () => sendMessage(textInput.value));
+textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(textInput.value); });
 document.addEventListener('touchstart', () => ensureAudioContext(), { once: true, passive: true });
-
-// ── Start ─────────────────────────────────────────────────────
-drawOrb();

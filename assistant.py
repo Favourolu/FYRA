@@ -57,6 +57,29 @@ def respond(user_input: str, memory_context: str, client) -> str:
     return reply
 
 
+def respond_stream(user_input: str, memory_context: str, client):
+    """Yield text chunks from a streaming Claude response."""
+    global _history
+    load_history_from_disk()
+
+    _history.append({"role": "user", "content": user_input})
+    if len(_history) > MAX_HISTORY_TURNS * 2:
+        _history = _history[-(MAX_HISTORY_TURNS * 2):]
+
+    full = ""
+    with client.messages.stream(
+        model=MODEL,
+        max_tokens=1024,
+        system=build_system_prompt(memory_context),
+        messages=_history,
+    ) as stream:
+        for chunk in stream.text_stream:
+            full += chunk
+            yield chunk
+
+    _history.append({"role": "assistant", "content": full})
+
+
 def extract_memory_update(user_input: str, intent: str, response_text: str, client) -> dict:
     try:
         prompt = EXTRACT_USER_TEMPLATE.format(

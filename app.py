@@ -99,28 +99,42 @@ def handle_message(data):
 
     classified_intent = intent_module.classify(text, _client)
     ctx = memory_module.get_relevant_memory(classified_intent, text)
-    response_text = assistant.respond(text, ctx, _client)
+
+    # Stream response — emit text chunks immediately, TTS each sentence
+    full_response = ""
+    sentence_buf = ""
+    emit("stream_start", {})
+
+    for chunk in assistant.respond_stream(text, ctx, _client):
+        full_response += chunk
+        sentence_buf += chunk
+        emit("stream_chunk", {"text": chunk})
+
+        # TTS when we hit a natural sentence boundary
+        stripped = sentence_buf.strip()
+        if stripped and stripped[-1] in ".!?:" and len(stripped) >= 12:
+            audio = _tts(stripped)
+            sentence_buf = ""
+            emit("audio_chunk", {"audio": audio})
+
+    # Flush any remaining text
+    if sentence_buf.strip():
+        audio = _tts(sentence_buf.strip())
+        emit("audio_chunk", {"audio": audio})
+
+    emit("stream_end", {"intent": classified_intent})
 
     if classified_intent in ("store_memory", "check_in", "task_help"):
         extracted = assistant.extract_memory_update(
-            text, classified_intent, response_text, _client
+            text, classified_intent, full_response, _client
         )
         memory_module.apply_memory_update(extracted)
 
-    memory_module.save_conversation_turn(text, response_text)
-    memory_module.log_interaction(text, classified_intent, response_text)
+    memory_module.save_conversation_turn(text, full_response)
+    memory_module.log_interaction(text, classified_intent, full_response)
 
-    # Refresh profile panel after any update
     profile_data = memory_module.get_profile_panel_data()
     emit("profile_update", profile_data)
-
-    audio_b64 = _tts(response_text)
-
-    emit("fyra_response", {
-        "text": response_text,
-        "audio": audio_b64,
-        "intent": classified_intent,
-    })
 
 
 @socketio.on("set_voice")
