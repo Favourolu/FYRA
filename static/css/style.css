@@ -327,9 +327,10 @@ body::before {
     font-family: 'Orbitron', monospace;
     font-size: 10px;
     letter-spacing: 7px;
-    color: var(--text-dim);
+    color: #0099cc;
     margin-top: 12px;
     text-transform: uppercase;
+    text-shadow: 0 0 12px rgba(0, 180, 255, 0.6);
 }
 
 /* ── Input ── */

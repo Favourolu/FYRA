@@ -19,56 +19,93 @@ let orbState = 'idle';
 let time = 0;
 
 const COLORS = {
-    idle:       { core: '#ffaa00', mid: '#ff6600', outer: '#331100', glow: 'rgba(255,160,0,0.5)',   ring: '#ffaa00' },
-    listening:  { core: '#ffee44', mid: '#ffaa00', outer: '#221100', glow: 'rgba(255,220,0,0.6)',   ring: '#ffdd00' },
-    processing: { core: '#ff6600', mid: '#ff3300', outer: '#220000', glow: 'rgba(255,80,0,0.6)',    ring: '#ff6600' },
-    speaking:   { core: '#ffcc44', mid: '#ffaa00', outer: '#331a00', glow: 'rgba(255,200,0,0.65)',  ring: '#ffcc00' },
+    idle:       { node: '#00ccff', hub: '#ffffff', line: '#0099dd', glow: 'rgba(0,180,255,0.18)',  core: '#00d4ff' },
+    listening:  { node: '#00ffaa', hub: '#ffffff', line: '#00cc88', glow: 'rgba(0,255,160,0.20)',  core: '#00ffbb' },
+    processing: { node: '#aa88ff', hub: '#ffffff', line: '#7755ee', glow: 'rgba(130,80,255,0.22)', core: '#cc99ff' },
+    speaking:   { node: '#44ddff', hub: '#ffffff', line: '#00aaff', glow: 'rgba(0,210,255,0.25)',  core: '#88eeff' },
 };
 
 const STATE_LABEL  = { idle: 'STANDBY', listening: 'LISTENING', processing: 'PROCESSING', speaking: 'SPEAKING' };
 const STATUS_LABEL = { idle: 'READY',   listening: 'LISTENING', processing: 'THINKING',   speaking: 'RESPONDING' };
 
-// ── Orbital rings — each has a tilt axis and rotation speed ──
-const orbits = [
-    { tiltX: 0,   tiltY: 0,   rot: 0,           speed:  0.004,  r: 125, nodeCount: 6  },
-    { tiltX: 65,  tiltY: 0,   rot: 0.6,          speed: -0.003,  r: 125, nodeCount: 8  },
-    { tiltX: 115, tiltY: 0,   rot: 1.8,          speed:  0.0025, r: 125, nodeCount: 5  },
-    { tiltX: 35,  tiltY: 20,  rot: 3.0,          speed: -0.0035, r: 108, nodeCount: 6  },
-    { tiltX: 90,  tiltY: 45,  rot: 1.2,          speed:  0.005,  r: 108, nodeCount: 4  },
-    { tiltX: 150, tiltY: 30,  rot: 0.3,          speed: -0.002,  r: 145, nodeCount: 7  },
-    { tiltX: 55,  tiltY: 70,  rot: 2.4,          speed:  0.003,  r: 138, nodeCount: 5  },
-];
+// ── Sphere node network ───────────────────────────────────────
+const SPHERE_R    = 148;
+const NODE_COUNT  = 88;
+const CONN_DIST   = 68;   // max 3D distance for a connection
+const MAX_CONN    = 5;    // max connections per node
 
-// Project a 3D ring onto 2D canvas
-function getOrbitPoints(cx, cy, orbit, steps = 120) {
-    const { tiltX, tiltY, rot, r } = orbit;
-    const tx = tiltX * Math.PI / 180;
-    const ty = tiltY * Math.PI / 180;
-    const points = [];
-
-    for (let i = 0; i <= steps; i++) {
-        const a = (i / steps) * Math.PI * 2 + rot;
-
-        // Circle in local space
-        let x = Math.cos(a) * r;
-        let y = Math.sin(a) * r;
-        let z = 0;
-
-        // Rotate around X axis
-        let y1 = y * Math.cos(tx) - z * Math.sin(tx);
-        let z1 = y * Math.sin(tx) + z * Math.cos(tx);
-
-        // Rotate around Y axis
-        let x2 = x * Math.cos(ty) + z1 * Math.sin(ty);
-        let z2 = -x * Math.sin(ty) + z1 * Math.cos(ty);
-
-        points.push({ x: cx + x2, y: cy + y1, z: z2 });
+// Fibonacci-distributed nodes on sphere surface
+const BASE_NODES = (() => {
+    const nodes = [];
+    const phi = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < NODE_COUNT; i++) {
+        const y  = 1 - (i / (NODE_COUNT - 1)) * 2;
+        const r  = Math.sqrt(Math.max(0, 1 - y * y));
+        const th = phi * i;
+        nodes.push({
+            bx: Math.cos(th) * r * SPHERE_R,
+            by: y * SPHERE_R,
+            bz: Math.sin(th) * r * SPHERE_R,
+            isHub: i % 8 === 0,
+        });
     }
-    return points;
+    return nodes;
+})();
+
+// Precompute which node pairs are connected
+const CONNECTIONS = (() => {
+    const conns = [];
+    const counts = new Array(NODE_COUNT).fill(0);
+    for (let i = 0; i < NODE_COUNT; i++) {
+        for (let j = i + 1; j < NODE_COUNT; j++) {
+            if (counts[i] >= MAX_CONN || counts[j] >= MAX_CONN) continue;
+            const dx = BASE_NODES[i].bx - BASE_NODES[j].bx;
+            const dy = BASE_NODES[i].by - BASE_NODES[j].by;
+            const dz = BASE_NODES[i].bz - BASE_NODES[j].bz;
+            if (Math.sqrt(dx*dx + dy*dy + dz*dz) < CONN_DIST) {
+                conns.push([i, j]);
+                counts[i]++;
+                counts[j]++;
+            }
+        }
+    }
+    return conns;
+})();
+
+// Particles that burst outward during processing
+const particles = [];
+function spawnParticles(cx, cy) {
+    for (let i = 0; i < 18; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1.2 + Math.random() * 2.5;
+        particles.push({
+            x: cx, y: cy,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            life: 1.0,
+            decay: 0.018 + Math.random() * 0.015,
+            r: 1 + Math.random() * 2,
+        });
+    }
+}
+
+let rotY = 0;
+let rotX = 0.28; // fixed slight tilt
+
+function rotPt(bx, by, bz, ry, rx) {
+    // Y rotation
+    const x1 =  bx * Math.cos(ry) + bz * Math.sin(ry);
+    const z1 = -bx * Math.sin(ry) + bz * Math.cos(ry);
+    // X rotation
+    const y2 = by * Math.cos(rx) - z1 * Math.sin(rx);
+    const z2 = by * Math.sin(rx) + z1 * Math.cos(rx);
+    return { x: x1, y: y2, z: z2 };
 }
 
 // ── Set state ─────────────────────────────────────────────────
+let prevOrbState = 'idle';
 function setOrbState(state) {
+    prevOrbState = orbState;
     orbState = state;
     orbStateText.textContent = STATE_LABEL[state];
     statusText.textContent   = STATUS_LABEL[state];
@@ -76,6 +113,8 @@ function setOrbState(state) {
 }
 
 // ── Draw ──────────────────────────────────────────────────────
+let particleTimer = 0;
+
 function drawOrb() {
     const W = canvas.width, H = canvas.height;
     const cx = W / 2, cy = H / 2;
@@ -83,133 +122,113 @@ function drawOrb() {
     time += 0.016;
 
     const c = COLORS[orbState];
-    const speedMult = orbState === 'processing' ? 4 : orbState === 'speaking' ? 1.8 : 1;
+    const speedMult = orbState === 'processing' ? 3.2 : orbState === 'speaking' ? 1.6 : 1;
+    rotY += 0.0038 * speedMult;
 
-    // Update ring rotations
-    orbits.forEach(o => { o.rot += o.speed * speedMult; });
+    // Pulse factor
+    const pulse = orbState === 'speaking'
+        ? 1 + Math.sin(time * 5.5) * 0.10
+        : orbState === 'listening'
+        ? 1 + Math.sin(time * 2.5) * 0.05
+        : 1 + Math.sin(time * 1.2) * 0.025;
 
-    // ── Deep background glow ──
-    const bgGlow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 180);
+    // ── Ambient glow behind sphere ──
+    const glowR = SPHERE_R * 1.15 * pulse;
+    const bgGlow = ctx.createRadialGradient(cx, cy, SPHERE_R * 0.3, cx, cy, glowR * 1.4);
     bgGlow.addColorStop(0,   c.glow);
-    bgGlow.addColorStop(0.5, c.glow.replace('0.5', '0.1').replace('0.6', '0.1').replace('0.65', '0.1'));
+    bgGlow.addColorStop(0.6, c.glow.replace(/[\d.]+\)$/, '0.06)'));
     bgGlow.addColorStop(1,   'transparent');
-    ctx.beginPath();
-    ctx.arc(cx, cy, 180, 0, Math.PI * 2);
-    ctx.fillStyle = bgGlow;
     ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, glowR * 1.4, 0, Math.PI * 2);
+    ctx.fillStyle = bgGlow;
     ctx.fill();
 
-    // ── Orbital rings ──
-    orbits.forEach((orbit, idx) => {
-        const pts = getOrbitPoints(cx, cy, orbit);
-
-        // Sort by z for depth
-        const alpha = 0.35 + 0.2 * Math.sin(time * 0.7 + idx);
-
-        ctx.beginPath();
-        pts.forEach((p, i) => {
-            // Fade segments on far side (z < 0 = behind)
-            if (i === 0) { ctx.moveTo(p.x, p.y); return; }
-            const prev = pts[i - 1];
-            // Simple depth fade — far side dimmer
-            const depth = (p.z + orbit.r) / (orbit.r * 2);
-            ctx.globalAlpha = alpha * (0.3 + 0.7 * depth);
-            ctx.beginPath();
-            ctx.moveTo(prev.x, prev.y);
-            ctx.lineTo(p.x, p.y);
-            ctx.strokeStyle = c.ring;
-            ctx.lineWidth = 1.2;
-            ctx.stroke();
-        });
-
-        // ── Glowing nodes on ring ──
-        const nodeSpacing = Math.floor(pts.length / orbit.nodeCount);
-        for (let n = 0; n < orbit.nodeCount; n++) {
-            const p = pts[n * nodeSpacing];
-            const depth = (p.z + orbit.r) / (orbit.r * 2);
-            const nodeSize = 2 + depth * 2.5;
-
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, nodeSize, 0, Math.PI * 2);
-            ctx.fillStyle = c.core;
-            ctx.globalAlpha = 0.5 + 0.5 * depth;
-            ctx.fill();
-
-            // Node glow
-            const ng = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, nodeSize * 3);
-            ng.addColorStop(0, c.core + '88');
-            ng.addColorStop(1, 'transparent');
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, nodeSize * 3, 0, Math.PI * 2);
-            ctx.fillStyle = ng;
-            ctx.globalAlpha = 0.6 * depth;
-            ctx.fill();
-        }
+    // ── Project all nodes ──
+    const proj = BASE_NODES.map(n => {
+        const r = rotPt(n.bx, n.by, n.bz, rotY, rotX);
+        const depth = (r.z + SPHERE_R) / (SPHERE_R * 2); // 0=back, 1=front
+        return { x: cx + r.x * pulse, y: cy + r.y * pulse, z: r.z, depth, isHub: n.isHub };
     });
 
-    ctx.globalAlpha = 1;
-
-    // ── Pulse scale ──
-    const pulse = orbState === 'speaking'
-        ? 1 + Math.sin(time * 5) * 0.12
-        : 1 + Math.sin(time * 1.5) * 0.04;
-
-    // ── Mid glow ring ──
-    const midR = 68 * pulse;
-    const midGlow = ctx.createRadialGradient(cx, cy, midR * 0.4, cx, cy, midR * 1.8);
-    midGlow.addColorStop(0,   c.mid + 'aa');
-    midGlow.addColorStop(0.5, c.mid + '33');
-    midGlow.addColorStop(1,   'transparent');
-    ctx.beginPath();
-    ctx.arc(cx, cy, midR * 1.8, 0, Math.PI * 2);
-    ctx.fillStyle = midGlow;
-    ctx.globalAlpha = 0.9;
-    ctx.fill();
-
-    // ── Core orb ──
-    const cr = 52 * pulse;
-    const coreGrad = ctx.createRadialGradient(cx - 16, cy - 16, 2, cx, cy, cr);
-    coreGrad.addColorStop(0,   '#ffffff');
-    coreGrad.addColorStop(0.15, c.core);
-    coreGrad.addColorStop(0.6,  c.mid);
-    coreGrad.addColorStop(1,    c.outer);
-    ctx.beginPath();
-    ctx.arc(cx, cy, cr, 0, Math.PI * 2);
-    ctx.fillStyle = coreGrad;
-    ctx.globalAlpha = 0.95;
-    ctx.fill();
-
-    // ── Specular ──
-    const sg = ctx.createRadialGradient(cx - 14, cy - 14, 0, cx - 14, cy - 14, cr * 0.4);
-    sg.addColorStop(0, 'rgba(255,255,255,0.65)');
-    sg.addColorStop(1, 'transparent');
-    ctx.beginPath();
-    ctx.arc(cx - 14, cy - 14, cr * 0.4, 0, Math.PI * 2);
-    ctx.fillStyle = sg;
-    ctx.globalAlpha = 1;
-    ctx.fill();
-
-    // ── Waveform bubble (listening / speaking) ──
-    if (orbState === 'listening' || orbState === 'speaking') {
-        const wR = 78;
-        const pts = 80;
-        const amp = orbState === 'speaking' ? 20 : 12;
-        const freq = orbState === 'speaking' ? 4.5 : 2.5;
-
+    // ── Connection lines ──
+    ctx.lineWidth = 0.9;
+    for (const [i, j] of CONNECTIONS) {
+        const a = proj[i], b = proj[j];
+        const avg = (a.depth + b.depth) * 0.5;
+        if (avg < 0.08) continue;
         ctx.beginPath();
-        for (let i = 0; i <= pts; i++) {
-            const angle = (i / pts) * Math.PI * 2 - Math.PI / 2;
-            const wave  = Math.sin(time * freq + i * 0.35) * amp
-                        + Math.sin(time * freq * 0.55 + i * 0.7) * (amp * 0.35);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = c.line;
+        ctx.globalAlpha = avg * 0.55;
+        ctx.stroke();
+    }
+
+    // ── Nodes (back to front) ──
+    const sorted = proj.map((p, i) => ({ ...p, i })).sort((a, b) => a.z - b.z);
+    for (const p of sorted) {
+        const alpha = 0.25 + 0.75 * p.depth;
+        const baseR = p.isHub ? 3.8 : 1.8;
+        const nr    = baseR * (0.4 + 0.6 * p.depth) * pulse;
+
+        if (p.isHub && p.depth > 0.35) {
+            // Hub halo
+            const halo = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, nr * 5);
+            halo.addColorStop(0,   c.core + '55');
+            halo.addColorStop(1,   'transparent');
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, nr * 5, 0, Math.PI * 2);
+            ctx.fillStyle = halo;
+            ctx.globalAlpha = alpha * 0.7;
+            ctx.fill();
+        }
+
+        // Node dot
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, nr, 0, Math.PI * 2);
+        ctx.fillStyle = p.isHub ? '#ffffff' : c.node;
+        ctx.globalAlpha = alpha;
+        ctx.fill();
+    }
+
+    // ── Processing: burst particles ──
+    if (orbState === 'processing') {
+        particleTimer++;
+        if (particleTimer % 8 === 0) spawnParticles(cx, cy);
+    } else {
+        particleTimer = 0;
+    }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x  += p.vx;
+        p.y  += p.vy;
+        p.life -= p.decay;
+        if (p.life <= 0) { particles.splice(i, 1); continue; }
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+        ctx.fillStyle = c.core;
+        ctx.globalAlpha = p.life * 0.8;
+        ctx.fill();
+    }
+
+    // ── Listening: waveform ring ──
+    if (orbState === 'listening') {
+        const wR = SPHERE_R * 0.55;
+        ctx.beginPath();
+        for (let i = 0; i <= 80; i++) {
+            const angle = (i / 80) * Math.PI * 2 - Math.PI / 2;
+            const wave  = Math.sin(time * 3 + i * 0.4) * 10 + Math.sin(time * 1.8 + i * 0.8) * 5;
             const r     = wR + wave;
             const x = cx + Math.cos(angle) * r;
             const y = cy + Math.sin(angle) * r;
             i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
         }
         ctx.closePath();
-        ctx.strokeStyle = c.core;
-        ctx.globalAlpha = 0.5;
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = c.node;
+        ctx.globalAlpha = 0.45;
+        ctx.lineWidth = 1.5;
         ctx.stroke();
     }
 
