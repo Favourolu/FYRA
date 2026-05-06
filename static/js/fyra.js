@@ -242,10 +242,9 @@ function typeWrite(el, text, i = 0) {
 }
 
 // ── Audio ─────────────────────────────────────────────────────
-let activeAudio = null;
+let activeSource = null;
 let audioContext = null;
 
-// Safari requires audio context to be created/resumed on user gesture
 function ensureAudioContext() {
     if (!audioContext) {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -257,25 +256,34 @@ function ensureAudioContext() {
 
 function playAudio(b64) {
     if (!b64) { setOrbState('idle'); return; }
-    const bytes = atob(b64);
-    const arr   = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-    const url = URL.createObjectURL(new Blob([arr], { type: 'audio/mpeg' }));
-    if (activeAudio) { activeAudio.pause(); activeAudio = null; }
-    activeAudio = new Audio(url);
-    activeAudio.playsInline = true;
-    setOrbState('speaking');
-    activeAudio.play().catch(() => {
-        // If autoplay blocked, wait for next user tap then play
-        const resume = () => {
-            activeAudio && activeAudio.play();
-            document.removeEventListener('touchstart', resume);
-            document.removeEventListener('click', resume);
-        };
-        document.addEventListener('touchstart', resume, { once: true });
-        document.addEventListener('click', resume, { once: true });
+
+    // Decode base64 → ArrayBuffer
+    const binary = atob(b64);
+    const buf = new ArrayBuffer(binary.length);
+    const view = new Uint8Array(buf);
+    for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
+
+    ensureAudioContext();
+
+    // Stop any currently playing audio
+    if (activeSource) {
+        try { activeSource.stop(); } catch (_) {}
+        activeSource = null;
+    }
+
+    // Decode and play via AudioContext (works in Safari)
+    audioContext.decodeAudioData(buf, (decoded) => {
+        const src = audioContext.createBufferSource();
+        src.buffer = decoded;
+        src.connect(audioContext.destination);
+        setOrbState('speaking');
+        src.start(0);
+        src.onended = () => { activeSource = null; setOrbState('idle'); };
+        activeSource = src;
+    }, (err) => {
+        console.error('[Audio] Decode failed:', err);
+        setOrbState('idle');
     });
-    activeAudio.onended = () => { URL.revokeObjectURL(url); setOrbState('idle'); };
 }
 
 // ── Send ──────────────────────────────────────────────────────
