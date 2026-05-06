@@ -1,11 +1,8 @@
 anthropic
 python-dotenv
-openai-whisper
-sounddevice
-numpy
-pygame
 msgpack
 requests
 flask
 flask-socketio
-simple-websocket
+eventlet
+gunicorn

@@ -1,6 +1,7 @@
 .env
 memory/*.json
-logs/
+logs/*.json
+logs/*.log
 __pycache__/
 *.pyc
 *.pyo

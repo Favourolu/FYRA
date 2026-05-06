@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 import os
 import base64
 import socket as _socket
@@ -18,7 +21,7 @@ import memory as memory_module
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.urandom(24)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
@@ -146,7 +149,8 @@ def handle_set_voice(data):
 
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
     ip = _local_ip()
-    print(f"\nFyra UI → http://localhost:5000")
-    print(f"Mobile  → http://{ip}:5000\n")
-    socketio.run(app, host="0.0.0.0", debug=False, port=5000, allow_unsafe_werkzeug=True)
+    print(f"\nFyra UI → http://localhost:{port}")
+    print(f"Mobile  → http://{ip}:{port}\n")
+    socketio.run(app, host="0.0.0.0", debug=False, port=port, allow_unsafe_werkzeug=True)
