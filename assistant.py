@@ -4,6 +4,7 @@ from datetime import date
 
 from config import (
     MODEL,
+    MODEL_FAST,
     MAX_HISTORY_TURNS,
     SYSTEM_PROMPT_TEMPLATE,
     EXTRACT_SYSTEM,
@@ -127,7 +128,7 @@ def extract_memory_update(user_input: str, intent: str, response_text: str, clie
             response=response_text,
         )
         response = client.messages.create(
-            model=MODEL,
+            model=MODEL_FAST,
             max_tokens=512,
             system=EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": prompt}],

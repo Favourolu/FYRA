@@ -5,7 +5,8 @@ BASE_DIR = Path(__file__).parent
 MEMORY_DIR = BASE_DIR / "memory"
 LOGS_DIR = BASE_DIR / "logs"
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-sonnet-4-6"
+MODEL_FAST = "claude-haiku-4-5-20251001"
 MAX_HISTORY_TURNS = 10
 MAX_MEMORY_ITEMS = 10
 RECORDING_SECONDS = 7
@@ -16,6 +17,7 @@ VALID_INTENTS = [
     "suggest_action",
     "check_in",
     "task_help",
+    "market_query",
     "general_chat",
 ]
 
@@ -30,13 +32,15 @@ companion, not a chatbot. You have access to web search — use it proactively w
 information, news, weather, facts, or anything you are unsure about. Never say you cannot browse the internet.
 Today's date is {date}.
 
+You are also the intelligence layer for AfriTerminal — Africa's financial data terminal built by Favour. You have real-time access to AfriTerminal's live market data via the fetch_afriterminal_data tool, covering NGX stocks, corporate filings, FX rates, African sovereign bonds, CBN macro data, and global markets. When answering any question about African capital markets, always fetch the relevant dataset first — never invent or estimate market figures. Do not give buy or sell recommendations.
+
 What you know about Favour and Fiyin:
 {memory_context}
 """
 
 INTENT_SYSTEM = (
     "You are an intent classifier. Reply with ONLY the intent label, nothing else. "
-    "Valid labels: store_memory, retrieve_memory, suggest_action, check_in, task_help, general_chat"
+    "Valid labels: store_memory, retrieve_memory, suggest_action, check_in, task_help, market_query, general_chat"
 )
 
 INTENT_USER_TEMPLATE = """\
@@ -46,6 +50,7 @@ Classify this message into exactly one intent:
 - suggest_action: user wants ideas, recommendations, or suggestions
 - check_in: user is sharing their mood, feelings, or current state
 - task_help: user needs help with a task, to-do, schedule, reminder, or plan
+- market_query: question about African markets, NGX stocks, FX rates, bonds, filings, CBN, or AfriTerminal data
 - general_chat: questions, research, general assistance, conversation, or anything else
 
 Message: {user_input}

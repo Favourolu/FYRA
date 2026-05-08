@@ -2,7 +2,7 @@ import os
 import re
 import base64
 import socket as _socket
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 
@@ -80,7 +80,8 @@ def _tts(text: str):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    startup_context = request.args.get("context","").strip()[:2000]
+    return render_template("index.html", startup_context=startup_context)
 
 
 @socketio.on("connect")
@@ -112,9 +113,7 @@ def handle_message(data):
     classified_intent = intent_module.classify(text, _client)
     ctx = memory_module.get_relevant_memory(classified_intent, text)
 
-    # Stream response — emit text chunks immediately, TTS each sentence
     full_response = ""
-    sentence_buf = ""
     emit("stream_start", {})
 
     def _on_tool(name, _inp):
@@ -122,22 +121,14 @@ def handle_message(data):
 
     for chunk in assistant.respond_stream(text, ctx, _client, on_tool_call=_on_tool):
         full_response += chunk
-        sentence_buf += chunk
         emit("stream_chunk", {"text": chunk})
 
-        # TTS when we hit a natural sentence boundary
-        stripped = sentence_buf.strip()
-        if stripped and stripped[-1] in ".!?:" and len(stripped) >= 12:
-            audio = _tts(_strip_md(stripped))
-            sentence_buf = ""
-            emit("audio_chunk", {"audio": audio})
-
-    # Flush any remaining text
-    if sentence_buf.strip():
-        audio = _tts(_strip_md(sentence_buf.strip()))
-        emit("audio_chunk", {"audio": audio})
-
     emit("stream_end", {"intent": classified_intent})
+
+    if full_response.strip():
+        audio = _tts(_strip_md(full_response)[:800])
+        if audio:
+            emit("audio_chunk", {"audio": audio})
 
     if classified_intent in ("store_memory", "check_in", "task_help"):
         extracted = assistant.extract_memory_update(

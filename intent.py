@@ -1,10 +1,10 @@
-from config import MODEL, INTENT_SYSTEM, INTENT_USER_TEMPLATE, VALID_INTENTS
+from config import MODEL_FAST, INTENT_SYSTEM, INTENT_USER_TEMPLATE, VALID_INTENTS
 
 
 def classify(user_input: str, client) -> str:
     try:
         response = client.messages.create(
-            model=MODEL,
+            model=MODEL_FAST,
             max_tokens=20,
             system=INTENT_SYSTEM,
             messages=[

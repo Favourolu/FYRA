@@ -328,6 +328,9 @@ function sendMessage(text) {
 // ── SocketIO events ───────────────────────────────────────────
 socket.on('stream_start', () => {
     streamingText = '';
+    if (activeSource) { try { activeSource.stop(); } catch (_) {} activeSource = null; }
+    audioQueue = [];
+    isPlayingAudio = false;
     if (responseFadeTimer) clearTimeout(responseFadeTimer);
     orbResponse.textContent = '';
     orbResponse.classList.add('visible');
@@ -357,7 +360,15 @@ socket.on('stream_end', data => {
 });
 
 socket.on('status', data => setOrbState(data.state));
-socket.on('connect',    () => { setOrbState('idle'); document.getElementById('connText').textContent = 'connected'; });
+socket.on('connect', () => {
+    setOrbState('idle');
+    document.getElementById('connText').textContent = 'connected';
+    if (window.FYRA_STARTUP_CONTEXT) {
+        const msg = window.FYRA_STARTUP_CONTEXT;
+        window.FYRA_STARTUP_CONTEXT = '';
+        setTimeout(() => sendMessage(msg), 800);
+    }
+});
 socket.on('disconnect', () => { document.getElementById('connText').textContent = 'offline'; });
 
 socket.on('profile_update', data => {
