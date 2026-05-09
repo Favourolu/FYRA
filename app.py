@@ -43,6 +43,9 @@ def _strip_md(text: str) -> str:
     text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.M)    # numbered lists
     text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)   # links
     text = re.sub(r'\n+', ' ', text).strip()
+        text = re.sub(r'\|', ' ', text)           # table pipes
+    text = re.sub(r'[{}\[\]]', '', text)      # braces/brackets
+
     return text
 
 
