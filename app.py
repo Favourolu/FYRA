@@ -18,6 +18,7 @@ import anthropic
 import intent as intent_module
 import assistant
 import memory as memory_module
+from config import MODEL_FAST
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.urandom(24)
@@ -82,6 +83,28 @@ def _tts(text: str):
         return None
 
 
+def _generate_greeting(person: str, memory_context: str) -> str:
+    from datetime import datetime
+    hour = datetime.now().hour
+    time_of_day = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
+    name = person.capitalize() if person != "unknown" else "there"
+    brief = memory_module.get_startup_brief()
+    context = memory_context + (f"\nAlerts: {brief}" if brief else "")
+    response = _client.messages.create(
+        model=MODEL_FAST,
+        max_tokens=80,
+        system=(
+            "You are Fyra, a personal AI inspired by J.A.R.V.I.S. "
+            "Write exactly one short greeting sentence spoken aloud — no markdown, no lists. "
+            "Use the person's name. Weave in the time of day naturally. "
+            "If context has open tasks or upcoming events, mention one briefly. "
+            "Be warm but efficient."
+        ),
+        messages=[{"role": "user", "content": f"Greet {name}. Time of day: {time_of_day}.\nContext:\n{context}"}],
+    )
+    return response.content[0].text.strip()
+
+
 @app.route("/")
 def index():
     startup_context = request.args.get("context","").strip()[:2000]
@@ -90,20 +113,40 @@ def index():
 
 @socketio.on("connect")
 def on_connect():
-    # Send live profile data to update the UI panel
     profile_data = memory_module.get_profile_panel_data()
     emit("profile_update", profile_data)
 
-    # Send conversation history so UI can restore it
     history = memory_module.load_conversation_history(limit=20)
     if history:
         emit("conversation_history", {"history": history})
 
-    # Send startup brief if there's something to surface
-    brief = memory_module.get_startup_brief()
-    if brief:
-        audio = _tts(brief)
-        emit("startup_brief", {"text": brief, "audio": audio})
+    # Jarvis-style: ask who's there every session
+    prompt = "Who am I speaking with?"
+    audio = _tts(prompt)
+    emit("greeting_prompt", {"text": prompt, "audio": audio})
+
+
+@socketio.on("greeting_response")
+def handle_greeting(data):
+    text = data.get("text", "").strip().lower()
+    sid = request.sid
+
+    if "favour" in text:
+        person = "favour"
+    elif "fiyin" in text:
+        person = "fiyin"
+    else:
+        person = "unknown"
+
+    ctx = memory_module.get_relevant_memory("check_in", person)
+    greeting = _generate_greeting(person, ctx)
+
+    socketio.emit("stream_start", {}, to=sid)
+    socketio.emit("stream_chunk", {"text": greeting}, to=sid)
+    socketio.emit("stream_end", {"intent": "greeting"}, to=sid)
+    audio = _tts(greeting)
+    if audio:
+        socketio.emit("audio_chunk", {"audio": audio}, to=sid)
 
 
 @socketio.on("user_message")

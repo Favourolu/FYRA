@@ -315,11 +315,24 @@ micBtn.addEventListener('click', () => {
     vadActive ? stopVAD(true) : startVAD();
 });
 
+// ── Greeting mode ─────────────────────────────────────────────
+let greetingMode = false;
+
 // ── Send ──────────────────────────────────────────────────────
 function sendMessage(text) {
     text = text.trim();
     if (!text) return;
     ensureAudioContext();
+
+    if (greetingMode) {
+        greetingMode = false;
+        textInput.placeholder = 'ask fyra anything...';
+        setOrbState('processing');
+        socket.emit('greeting_response', { text });
+        textInput.value = '';
+        return;
+    }
+
     setOrbState('processing');
     socket.emit('user_message', { text });
     textInput.value = '';
@@ -380,8 +393,19 @@ socket.on('profile_update', data => {
     document.getElementById('openTasks').textContent   = data.open_tasks > 0 ? `${data.open_tasks} OPEN` : 'NONE';
 });
 
+socket.on('greeting_prompt', data => {
+    greetingMode = true;
+    textInput.placeholder = 'type your name...';
+    showResponse(data.text);
+    if (data.audio) {
+        ensureAudioContext();
+        audioQueue.push(data.audio);
+        if (!isPlayingAudio) playNextChunk();
+    }
+});
+
 socket.on('conversation_history', () => {});
-socket.on('startup_brief', data => { if (data.text) showResponse(data.text); });
+socket.on('startup_brief', () => {});
 socket.on('voice_set', () => {});
 
 // ── Input ─────────────────────────────────────────────────────
