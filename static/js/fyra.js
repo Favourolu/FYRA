@@ -218,8 +218,8 @@ let vadMonitor   = null;
 let silenceTimer = null;
 let vadActive    = false;
 
-const VAD_THRESHOLD    = 0.012; // RMS voice threshold
-const SILENCE_MS       = 1600;  // stop after 1.6s silence
+const VAD_THRESHOLD    = 0.010; // RMS voice threshold
+const SILENCE_MS       = 2800;  // stop after 2.8s silence
 
 function getRMS(analyser) {
     const buf = new Float32Array(analyser.fftSize);
@@ -241,7 +241,6 @@ async function startVAD() {
         vadActive = true;
 
         setOrbState('listening');
-        micBtn.textContent = 'STOP';
         micBtn.classList.add('active');
 
 
@@ -271,7 +270,6 @@ function stopVAD(sendResult = false) {
     if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
     if (vadStream)    { vadStream.getTracks().forEach(t => t.stop()); vadStream = null; }
     if (recognition && sendResult) recognition.stop();
-    micBtn.textContent = 'MIC';
     micBtn.classList.remove('active');
     if (orbState === 'listening') setOrbState('idle');
 }

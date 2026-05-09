@@ -13,24 +13,30 @@
 <body>
     <div class="ui-container">
 
-        <!-- Top-left: mute -->
-        <button class="corner-btn mute-btn" id="micBtn">MIC</button>
-
         <!-- Top-right: connection status -->
         <div class="conn-status">
             <div class="status-indicator" id="statusDot"></div>
-            <span class="conn-text" id="connText">connected</span>
+            <span class="conn-text" id="connText">connecting...</span>
         </div>
 
         <!-- Particle orb -->
         <canvas id="orbCanvas" width="700" height="700"></canvas>
 
         <!-- State label + response -->
-        <div class="orb-state-text" id="orbStateText">STANDBY</div>
+        <div class="orb-state-text" id="orbStateText">standby</div>
         <div class="orb-response" id="orbResponse"></div>
 
         <!-- Input bar -->
         <footer class="input-area">
+            <!-- Mic button — tap to speak, tap again to stop -->
+            <button class="mic-btn" id="micBtn" title="Tap to speak">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="2" width="6" height="11" rx="3"/>
+                    <path d="M5 10a7 7 0 0 0 14 0"/>
+                    <line x1="12" y1="19" x2="12" y2="23"/>
+                    <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+            </button>
             <div class="input-wrapper">
                 <input type="text" id="textInput" placeholder="ask fyra anything..." autocomplete="off" spellcheck="false"/>
                 <div class="input-line"></div>
