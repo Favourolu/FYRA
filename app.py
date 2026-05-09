@@ -87,7 +87,8 @@ def _generate_greeting(person: str, memory_context: str) -> str:
     from datetime import datetime
     hour = datetime.now().hour
     time_of_day = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
-    name = person.capitalize() if person != "unknown" else "there"
+    titles = {"favour": "Mr. Favour", "fiyin": "Miss Fiyin"}
+    name = titles.get(person, "there")
     brief = memory_module.get_startup_brief()
     context = memory_context + (f"\nAlerts: {brief}" if brief else "")
     response = _client.messages.create(
