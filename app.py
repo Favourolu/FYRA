@@ -171,7 +171,9 @@ def handle_greeting_gender(data):
 
 @socketio.on("disconnect")
 def on_disconnect():
-    _pending_greeting.pop(request.sid, None)
+    sid = request.sid
+    _pending_greeting.pop(sid, None)
+    assistant.clear_session(sid)
 
 
 @socketio.on("user_message")
@@ -209,7 +211,7 @@ def handle_message(data):
     tts_thread = threading.Thread(target=_tts_worker, daemon=True)
     tts_thread.start()
 
-    for chunk in assistant.respond_stream(text, ctx, _client, on_tool_call=_on_tool):
+    for chunk in assistant.respond_stream(text, ctx, _client, sid, on_tool_call=_on_tool):
         full_response += chunk
         sentence_buf += chunk
         socketio.emit("stream_chunk", {"text": chunk}, to=sid)

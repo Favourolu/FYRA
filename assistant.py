@@ -11,23 +11,25 @@ from config import (
     EXTRACT_USER_TEMPLATE,
 )
 
-_history: list[dict] = []
-_history_loaded = False
+# Per-session conversation history keyed by socket ID.
+# Each connection gets its own isolated history so simultaneous users
+# never see each other's messages or context.
+_histories: dict[str, list[dict]] = {}
 
 
-def load_history_from_disk():
-    """Seed in-memory history from saved conversation on first use."""
-    global _history, _history_loaded
-    if _history_loaded:
-        return
-    _history_loaded = True
-    try:
-        from memory import get_history_for_assistant
-        prior = get_history_for_assistant(limit=6)
-        if prior:
-            _history = prior
-    except Exception:
-        pass
+def _get_history(sid: str) -> list[dict]:
+    if sid not in _histories:
+        try:
+            from memory import get_history_for_assistant
+            prior = get_history_for_assistant(limit=6)
+            _histories[sid] = prior if prior else []
+        except Exception:
+            _histories[sid] = []
+    return _histories[sid]
+
+
+def clear_session(sid: str):
+    _histories.pop(sid, None)
 
 
 def build_system_prompt(memory_context: str) -> str:
@@ -37,39 +39,38 @@ def build_system_prompt(memory_context: str) -> str:
     )
 
 
-def respond(user_input: str, memory_context: str, client) -> str:
-    global _history
-    load_history_from_disk()
+def respond(user_input: str, memory_context: str, client, sid: str = "cli") -> str:
+    history = _get_history(sid)
+    history.append({"role": "user", "content": user_input})
 
-    _history.append({"role": "user", "content": user_input})
-
-    if len(_history) > MAX_HISTORY_TURNS * 2:
-        _history = _history[-(MAX_HISTORY_TURNS * 2):]
+    if len(history) > MAX_HISTORY_TURNS * 2:
+        _histories[sid] = history[-(MAX_HISTORY_TURNS * 2):]
+        history = _histories[sid]
 
     response = client.messages.create(
         model=MODEL,
         max_tokens=1024,
         system=build_system_prompt(memory_context),
-        messages=_history,
+        messages=history,
     )
 
     reply = response.content[0].text.strip()
-    _history.append({"role": "assistant", "content": reply})
+    history.append({"role": "assistant", "content": reply})
     return reply
 
 
-def respond_stream(user_input: str, memory_context: str, client, on_tool_call=None):
-    """Yield text chunks, executing web tools when Claude requests them."""
+def respond_stream(user_input: str, memory_context: str, client, sid: str, on_tool_call=None):
+    """Yield text chunks for one session, isolated from all other sessions."""
     from tools import TOOLS, execute_tool
 
-    global _history
-    load_history_from_disk()
+    history = _get_history(sid)
+    history.append({"role": "user", "content": user_input})
 
-    _history.append({"role": "user", "content": user_input})
-    if len(_history) > MAX_HISTORY_TURNS * 2:
-        _history = _history[-(MAX_HISTORY_TURNS * 2):]
+    if len(history) > MAX_HISTORY_TURNS * 2:
+        _histories[sid] = history[-(MAX_HISTORY_TURNS * 2):]
+        history = _histories[sid]
 
-    messages = list(_history)
+    messages = list(history)
     full_response = ""
 
     while True:
@@ -91,7 +92,6 @@ def respond_stream(user_input: str, memory_context: str, client, on_tool_call=No
         if final.stop_reason != "tool_use":
             break
 
-        # Serialize content blocks to plain dicts for the API
         assistant_content = []
         tool_results = []
         for block in final.content:
@@ -117,7 +117,7 @@ def respond_stream(user_input: str, memory_context: str, client, on_tool_call=No
         messages.append({"role": "assistant", "content": assistant_content})
         messages.append({"role": "user", "content": tool_results})
 
-    _history.append({"role": "assistant", "content": full_response})
+    history.append({"role": "assistant", "content": full_response})
 
 
 def extract_memory_update(user_input: str, intent: str, response_text: str, client) -> dict:
