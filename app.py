@@ -116,17 +116,18 @@ def index():
 
 @socketio.on("connect")
 def on_connect():
+    sid = request.sid
     profile_data = memory_module.get_profile_panel_data()
-    emit("profile_update", profile_data)
+    socketio.emit("profile_update", profile_data, to=sid)
 
     history = memory_module.load_conversation_history(limit=20)
     if history:
-        emit("conversation_history", {"history": history})
+        socketio.emit("conversation_history", {"history": history}, to=sid)
 
     # Jarvis-style: ask who's there every session
     prompt = "Who am I speaking with?"
     audio = _tts(prompt)
-    emit("greeting_prompt", {"text": prompt, "audio": audio})
+    socketio.emit("greeting_prompt", {"text": prompt, "audio": audio}, to=sid)
 
 
 def _emit_greeting(sid: str, addressed_name: str, memory_key: str):
@@ -183,7 +184,7 @@ def handle_message(data):
         return
 
     sid = request.sid
-    emit("status", {"state": "processing"})
+    socketio.emit("status", {"state": "processing"}, to=sid)
 
     classified_intent = intent_module.classify(text, _client)
     ctx = memory_module.get_relevant_memory(classified_intent, text)
@@ -193,7 +194,7 @@ def handle_message(data):
 
     full_response = ""
     sentence_buf = ""
-    emit("stream_start", {})
+    socketio.emit("stream_start", {}, to=sid)
 
     def _on_tool(name, _inp):
         socketio.emit("tool_use", {"tool": name}, to=sid)
