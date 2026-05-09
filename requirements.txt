@@ -8,3 +8,4 @@ simple-websocket
 gunicorn
 duckduckgo-search
 beautifulsoup4
+httpx
