@@ -1,3 +1,4 @@
+import re
 import json
 import uuid
 import logging
@@ -30,6 +31,8 @@ _DEFAULT_PROFILES = {
 }
 
 CONVERSATION_FILE = LOGS_DIR / "conversation.json"
+PATTERNS_FILE = LOGS_DIR / "patterns.json"
+CORRECTIONS_FILE = MEMORY_DIR / "corrections.json"
 MAX_CONVERSATION = 200
 
 
@@ -49,6 +52,10 @@ def _init_files():
 
     if not CONVERSATION_FILE.exists():
         CONVERSATION_FILE.write_text("[]")
+    if not PATTERNS_FILE.exists():
+        PATTERNS_FILE.write_text(json.dumps({"question_log": [], "insights": ""}, indent=2))
+    if not CORRECTIONS_FILE.exists():
+        CORRECTIONS_FILE.write_text("[]")
 
     log_path = LOGS_DIR / "interactions.log"
     if not log_path.exists():
@@ -289,6 +296,109 @@ def get_startup_brief() -> str:
         return ""
 
     return "Quick brief: " + "; ".join(alerts) + "."
+
+
+def log_question_pattern(intent: str, user_input: str, client):
+    """Append question to rolling log; every 10 entries generate fresh insights via haiku."""
+    from config import MODEL_FAST
+    try:
+        data = json.loads(PATTERNS_FILE.read_text())
+    except Exception:
+        data = {"question_log": [], "insights": ""}
+
+    log = data.get("question_log", [])
+    log.append({"timestamp": datetime.utcnow().isoformat(), "intent": intent, "text": user_input[:200]})
+    if len(log) > 100:
+        log = log[-100:]
+    data["question_log"] = log
+
+    if len(log) % 10 == 0:
+        recent = log[-20:]
+        summary = "\n".join(f"[{e['intent']}] {e['text']}" for e in recent)
+        try:
+            resp = client.messages.create(
+                model=MODEL_FAST,
+                max_tokens=150,
+                system=(
+                    "You are an analyst reviewing recent questions asked to a personal AI. "
+                    "Identify 2-3 recurring topics, preferences, or patterns. "
+                    "Write one compact paragraph — no bullets, no markdown. "
+                    "Focus on what would help the AI serve these users better."
+                ),
+                messages=[{"role": "user", "content": f"Recent questions:\n{summary}"}],
+            )
+            data["insights"] = resp.content[0].text.strip()
+        except Exception:
+            pass
+
+    PATTERNS_FILE.write_text(json.dumps(data, indent=2))
+
+
+def save_correction(user_input: str, prior_response: str, client):
+    """Extract what was wrong and what the correct answer is, then persist it."""
+    from config import MODEL_FAST
+    try:
+        resp = client.messages.create(
+            model=MODEL_FAST,
+            max_tokens=150,
+            system="Extract the correction. Return ONLY valid JSON, no explanation or markdown.",
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"The user corrected Fyra.\n"
+                    f"User said: {user_input}\n"
+                    f"Prior response: {prior_response[:300]}\n\n"
+                    'Return JSON: {"topic": "...", "was_wrong": "...", "correct_is": "..."}\n'
+                    'If not a clear correction, return: {"topic": null}'
+                ),
+            }],
+        )
+        raw = resp.content[0].text.strip()
+        raw = re.sub(r"```(?:json)?\n?", "", raw).replace("```", "").strip()
+        parsed = json.loads(raw)
+        if not parsed.get("topic"):
+            return
+    except Exception:
+        return
+
+    try:
+        corrections = json.loads(CORRECTIONS_FILE.read_text())
+    except Exception:
+        corrections = []
+
+    corrections.append({
+        "timestamp": datetime.utcnow().isoformat(),
+        "topic": parsed.get("topic", ""),
+        "was_wrong": parsed.get("was_wrong", ""),
+        "correct_is": parsed.get("correct_is", ""),
+    })
+    CORRECTIONS_FILE.write_text(json.dumps(corrections[-50:], indent=2))
+
+
+def get_learning_context() -> str:
+    """Return insights and recent corrections to inject into the conversation context."""
+    parts = []
+    try:
+        data = json.loads(PATTERNS_FILE.read_text())
+        insights = data.get("insights", "").strip()
+        if insights:
+            parts.append(f"Observed patterns about these users:\n{insights}")
+    except Exception:
+        pass
+
+    try:
+        corrections = json.loads(CORRECTIONS_FILE.read_text())
+        recent = [c for c in corrections[-5:] if c.get("topic")]
+        if recent:
+            lines = [
+                f"  - On '{c['topic']}': previously said '{c['was_wrong']}' but correct is '{c['correct_is']}'"
+                for c in recent
+            ]
+            parts.append("Known corrections (never repeat these mistakes):\n" + "\n".join(lines))
+    except Exception:
+        pass
+
+    return "\n\n".join(parts)
 
 
 def log_interaction(user_input: str, intent: str, response: str):

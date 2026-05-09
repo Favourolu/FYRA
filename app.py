@@ -187,6 +187,9 @@ def handle_message(data):
 
     classified_intent = intent_module.classify(text, _client)
     ctx = memory_module.get_relevant_memory(classified_intent, text)
+    learning = memory_module.get_learning_context()
+    if learning:
+        ctx = ctx + "\n\n" + learning
 
     full_response = ""
     sentence_buf = ""
@@ -227,7 +230,11 @@ def handle_message(data):
 
     socketio.emit("stream_end", {"intent": classified_intent}, to=sid)
 
-    if classified_intent in ("store_memory", "check_in", "task_help"):
+    memory_module.log_question_pattern(classified_intent, text, _client)
+
+    if classified_intent == "correction":
+        memory_module.save_correction(text, full_response, _client)
+    elif classified_intent in ("store_memory", "check_in", "task_help"):
         extracted = assistant.extract_memory_update(
             text, classified_intent, full_response, _client
         )

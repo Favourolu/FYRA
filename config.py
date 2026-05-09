@@ -18,6 +18,7 @@ VALID_INTENTS = [
     "check_in",
     "task_help",
     "market_query",
+    "correction",
     "general_chat",
 ]
 
@@ -45,7 +46,7 @@ What you know about Favour and Fiyin:
 
 INTENT_SYSTEM = (
     "You are an intent classifier. Reply with ONLY the intent label, nothing else. "
-    "Valid labels: store_memory, retrieve_memory, suggest_action, check_in, task_help, market_query, general_chat"
+    "Valid labels: store_memory, retrieve_memory, suggest_action, check_in, task_help, market_query, correction, general_chat"
 )
 
 INTENT_USER_TEMPLATE = """\
@@ -56,6 +57,7 @@ Classify this message into exactly one intent:
 - check_in: user is sharing their mood, feelings, or current state
 - task_help: user needs help with a task, to-do, schedule, reminder, or plan
 - market_query: question about African markets, NGX stocks, FX rates, bonds, filings, CBN, or AfriTerminal data
+- correction: user is telling Fyra she got something wrong, correcting a fact, or fixing a previous response
 - general_chat: questions, research, general assistance, conversation, or anything else
 
 Message: {user_input}
