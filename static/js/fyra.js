@@ -131,6 +131,18 @@ function setTargets(state) {
 }
 setTargets('idle');
 
+// ── Colour palettes ───────────────────────────────────────────
+// Each row: [rMin, rMax, gMin, gMax, bMin, bMax]
+const PALETTES = [
+    [0.05, 0.60, 0.25, 0.80, 0.65, 1.00], // electric blue
+    [0.40, 0.80, 0.05, 0.30, 0.70, 1.00], // violet
+    [0.02, 0.20, 0.55, 1.00, 0.45, 0.80], // emerald
+    [0.60, 1.00, 0.05, 0.30, 0.25, 0.55], // crimson
+    [0.65, 1.00, 0.50, 0.90, 0.05, 0.30], // gold
+    [0.60, 1.00, 0.05, 0.35, 0.55, 0.90], // magenta
+];
+const PALETTE_SECS = 12; // seconds each palette holds before blending to next
+
 function animate() {
     requestAnimationFrame(animate);
     time += 0.016;
@@ -140,6 +152,17 @@ function animate() {
 
     const pulse = orbState === 'speaking' ? 1 + Math.sin(time * 4.5) * 0.11 : 1;
     const drift = orbState === 'processing' ? 1.8 : 0.55;
+
+    // Palette cycling — smooth ease-in-out blend between palettes
+    const pi  = Math.floor(time / PALETTE_SECS) % PALETTES.length;
+    const ni  = (pi + 1) % PALETTES.length;
+    const pt  = (time % PALETTE_SECS) / PALETTE_SECS;
+    const ps  = pt < 0.5 ? 2 * pt * pt : -1 + (4 - 2 * pt) * pt;
+    const P = PALETTES[pi], N = PALETTES[ni];
+    const rMn = P[0]+(N[0]-P[0])*ps, rMx = P[1]+(N[1]-P[1])*ps;
+    const gMn = P[2]+(N[2]-P[2])*ps, gMx = P[3]+(N[3]-P[3])*ps;
+    const bMn = P[4]+(N[4]-P[4])*ps, bMx = P[5]+(N[5]-P[5])*ps;
+    glowSprite.material.color.setRGB((rMn+rMx)*0.5, (gMn+gMx)*0.5, (bMn+bMx)*0.5);
 
     for (let i = 0; i < COUNT; i++) {
         const j = i * 3;
@@ -151,11 +174,11 @@ function animate() {
         posArr[j]   += Math.sin(time * 0.48 + phsArr[i]) * drift;
         posArr[j+1] += Math.cos(time * 0.37 + phsArr[i] * 1.3) * drift;
 
-        // Depth-based colour: deep blue → cyan → white
+        // Depth-based colour using current palette
         const depth = Math.max(0, Math.min(1, (posArr[j+2] + 300) / 600));
-        colArr[j]   = 0.05 + depth * 0.55;
-        colArr[j+1] = 0.25 + depth * 0.55;
-        colArr[j+2] = 0.65 + depth * 0.35;
+        colArr[j]   = rMn + depth * (rMx - rMn);
+        colArr[j+1] = gMn + depth * (gMx - gMn);
+        colArr[j+2] = bMn + depth * (bMx - bMn);
     }
 
     geo.attributes.position.needsUpdate = true;
