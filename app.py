@@ -1,6 +1,8 @@
 import os
 import re
+import queue
 import base64
+import threading
 import socket as _socket
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
@@ -110,27 +112,50 @@ def handle_message(data):
     if not text:
         return
 
+    sid = request.sid
     emit("status", {"state": "processing"})
 
     classified_intent = intent_module.classify(text, _client)
     ctx = memory_module.get_relevant_memory(classified_intent, text)
 
     full_response = ""
+    sentence_buf = ""
     emit("stream_start", {})
 
     def _on_tool(name, _inp):
-        emit("tool_use", {"tool": name})
+        socketio.emit("tool_use", {"tool": name}, to=sid)
+
+    # Background TTS thread — converts sentences to audio as they stream in,
+    # so speech starts while the rest of the text is still appearing.
+    tts_q = queue.SimpleQueue()
+
+    def _tts_worker():
+        while True:
+            item = tts_q.get()
+            if item is None:
+                break
+            audio = _tts(item)
+            if audio:
+                socketio.emit("audio_chunk", {"audio": audio}, to=sid)
+
+    tts_thread = threading.Thread(target=_tts_worker, daemon=True)
+    tts_thread.start()
 
     for chunk in assistant.respond_stream(text, ctx, _client, on_tool_call=_on_tool):
         full_response += chunk
-        emit("stream_chunk", {"text": chunk})
+        sentence_buf += chunk
+        socketio.emit("stream_chunk", {"text": chunk}, to=sid)
 
-    emit("stream_end", {"intent": classified_intent})
+        stripped = sentence_buf.strip()
+        if stripped and stripped[-1] in ".!?:" and len(stripped) >= 12:
+            tts_q.put(_strip_md(stripped))
+            sentence_buf = ""
 
-    if full_response.strip():
-        audio = _tts(_strip_md(full_response)[:800])
-        if audio:
-            emit("audio_chunk", {"audio": audio})
+    if sentence_buf.strip():
+        tts_q.put(_strip_md(sentence_buf.strip()))
+    tts_q.put(None)  # signal worker to stop
+
+    socketio.emit("stream_end", {"intent": classified_intent}, to=sid)
 
     if classified_intent in ("store_memory", "check_in", "task_help"):
         extracted = assistant.extract_memory_update(
@@ -142,7 +167,7 @@ def handle_message(data):
     memory_module.log_interaction(text, classified_intent, full_response)
 
     profile_data = memory_module.get_profile_panel_data()
-    emit("profile_update", profile_data)
+    socketio.emit("profile_update", profile_data, to=sid)
 
 
 @socketio.on("set_voice")

@@ -356,7 +356,7 @@ socket.on('audio_chunk', data => {
 socket.on('stream_end', data => {
     if (data.intent) lastIntentEl.textContent = data.intent;
     responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 15000);
-    if (!isPlayingAudio && audioQueue.length === 0) setOrbState('idle');
+    // Don't go idle here — let playNextChunk() handle it when audio actually finishes
 });
 
 socket.on('status', data => setOrbState(data.state));
