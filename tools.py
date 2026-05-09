@@ -14,9 +14,9 @@ def web_search(query):
         from duckduckgo_search import DDGS
         with DDGS() as ddg:
             results = list(ddg.text(query, max_results=5))
-        if not results: return "No results found."
+        if not results: return "[FAILED] Web search returned no results."
         return "\n---\n".join(f"Title: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}" for r in results)
-    except Exception as e: return f"Search failed: {e}"
+    except Exception as e: return f"[FAILED] Web search error: {e}"
 
 def fetch_page(url):
     try:
@@ -27,7 +27,7 @@ def fetch_page(url):
         for tag in soup(["script","style","nav","footer","header","aside"]): tag.decompose()
         text = soup.get_text(separator="\n", strip=True)
         return text[:4000] if len(text) > 4000 else text
-    except Exception as e: return f"Could not fetch page: {e}"
+    except Exception as e: return f"[FAILED] Could not fetch page: {e}"
 
 def fetch_afriterminal_data(dataset):
     urls = {
@@ -41,13 +41,13 @@ def fetch_afriterminal_data(dataset):
         "market_flows": f"{AFRITERMINAL_BASE}/market_flows.json",
     }
     url = urls.get(dataset)
-    if not url: return f"Unknown dataset '{dataset}'. Options: {list(urls.keys())}"
+    if not url: return f"[FAILED] Unknown dataset '{dataset}'. Options: {list(urls.keys())}"
     try:
         import httpx
         r = httpx.get(url, timeout=15, headers={"User-Agent":"Fyra/1.0"}, follow_redirects=True)
         r.raise_for_status()
         return f"[AfriTerminal · {dataset} · {datetime.now().strftime('%Y-%m-%d %H:%M')} WAT]\n{r.text[:8000]}"
-    except Exception as e: return f"Could not fetch AfriTerminal {dataset}: {e}"
+    except Exception as e: return f"[FAILED] Could not fetch AfriTerminal {dataset}: {e}"
 
 def execute_tool(name, inputs):
     if name == "web_search": return web_search(inputs.get("query",""))
