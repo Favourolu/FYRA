@@ -58,7 +58,7 @@ def _tts(text: str):
     try:
         import requests
         import msgpack
-        voice_id = os.getenv("FISH_AUDIO_VOICE_ID", "").strip() or "933563129e564b19a115bedd57b7406a"
+        voice_id = os.getenv("FISH_AUDIO_VOICE_ID", "").strip() or "329ff0b9604444ec982526af54630427"
         payload = {"text": text, "format": "mp3", "latency": "normal", "reference_id": voice_id}
         print(f"[TTS] Requesting voice | id={voice_id or '(default)'} | len={len(text)}")
         r = requests.post(
