@@ -316,6 +316,7 @@ micBtn.addEventListener('click', () => {
 });
 
 // ── Greeting mode ─────────────────────────────────────────────
+// false | 'name' | 'gender'
 let greetingMode = false;
 
 // ── Send ──────────────────────────────────────────────────────
@@ -324,11 +325,20 @@ function sendMessage(text) {
     if (!text) return;
     ensureAudioContext();
 
-    if (greetingMode) {
+    if (greetingMode === 'name') {
         greetingMode = false;
         textInput.placeholder = 'ask fyra anything...';
         setOrbState('processing');
         socket.emit('greeting_response', { text });
+        textInput.value = '';
+        return;
+    }
+
+    if (greetingMode === 'gender') {
+        greetingMode = false;
+        textInput.placeholder = 'ask fyra anything...';
+        setOrbState('processing');
+        socket.emit('greeting_gender', { text });
         textInput.value = '';
         return;
     }
@@ -394,8 +404,19 @@ socket.on('profile_update', data => {
 });
 
 socket.on('greeting_prompt', data => {
-    greetingMode = true;
+    greetingMode = 'name';
     textInput.placeholder = 'type your name...';
+    showResponse(data.text);
+    if (data.audio) {
+        ensureAudioContext();
+        audioQueue.push(data.audio);
+        if (!isPlayingAudio) playNextChunk();
+    }
+});
+
+socket.on('greeting_ask_gender', data => {
+    greetingMode = 'gender';
+    textInput.placeholder = 'male or female...';
     showResponse(data.text);
     if (data.audio) {
         ensureAudioContext();

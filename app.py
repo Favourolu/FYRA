@@ -83,12 +83,10 @@ def _tts(text: str):
         return None
 
 
-def _generate_greeting(person: str, memory_context: str) -> str:
+def _generate_greeting(addressed_name: str, memory_context: str) -> str:
     from datetime import datetime
     hour = datetime.now().hour
     time_of_day = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
-    titles = {"favour": "Mr. Favour", "fiyin": "Miss Fiyin"}
-    name = titles.get(person, "there")
     brief = memory_module.get_startup_brief()
     context = memory_context + (f"\nAlerts: {brief}" if brief else "")
     response = _client.messages.create(
@@ -101,9 +99,13 @@ def _generate_greeting(person: str, memory_context: str) -> str:
             "If context has open tasks or upcoming events, mention one briefly. "
             "Be warm but efficient."
         ),
-        messages=[{"role": "user", "content": f"Greet {name}. Time of day: {time_of_day}.\nContext:\n{context}"}],
+        messages=[{"role": "user", "content": f"Greet {addressed_name}. Time of day: {time_of_day}.\nContext:\n{context}"}],
     )
     return response.content[0].text.strip()
+
+
+# Stores names for guests mid-greeting flow: sid → entered name
+_pending_greeting: dict = {}
 
 
 @app.route("/")
@@ -127,27 +129,49 @@ def on_connect():
     emit("greeting_prompt", {"text": prompt, "audio": audio})
 
 
-@socketio.on("greeting_response")
-def handle_greeting(data):
-    text = data.get("text", "").strip().lower()
-    sid = request.sid
-
-    if "favour" in text:
-        person = "favour"
-    elif "fiyin" in text:
-        person = "fiyin"
-    else:
-        person = "unknown"
-
-    ctx = memory_module.get_relevant_memory("check_in", person)
-    greeting = _generate_greeting(person, ctx)
-
+def _emit_greeting(sid: str, addressed_name: str, memory_key: str):
+    ctx = memory_module.get_relevant_memory("check_in", memory_key)
+    greeting = _generate_greeting(addressed_name, ctx)
     socketio.emit("stream_start", {}, to=sid)
     socketio.emit("stream_chunk", {"text": greeting}, to=sid)
     socketio.emit("stream_end", {"intent": "greeting"}, to=sid)
     audio = _tts(greeting)
     if audio:
         socketio.emit("audio_chunk", {"audio": audio}, to=sid)
+
+
+@socketio.on("greeting_response")
+def handle_greeting(data):
+    text = data.get("text", "").strip()
+    sid = request.sid
+    lower = text.lower()
+
+    if "favour" in lower:
+        _emit_greeting(sid, "Mr. Favour", "favour")
+    elif "fiyin" in lower:
+        _emit_greeting(sid, "Miss Fiyin", "fiyin")
+    else:
+        # Unknown guest — store name and ask gender
+        entered_name = text.strip().split()[0].capitalize() or "there"
+        _pending_greeting[sid] = entered_name
+        question = "Are you male or female?"
+        audio = _tts(question)
+        socketio.emit("greeting_ask_gender", {"text": question, "audio": audio}, to=sid)
+
+
+@socketio.on("greeting_gender")
+def handle_greeting_gender(data):
+    text = data.get("text", "").strip().lower()
+    sid = request.sid
+    entered_name = _pending_greeting.pop(sid, "there")
+    prefix = "Mr." if any(w in text for w in ("male", "man", "mr", "boy")) else "Miss"
+    addressed_name = f"{prefix} {entered_name}"
+    _emit_greeting(sid, addressed_name, "general_chat")
+
+
+@socketio.on("disconnect")
+def on_disconnect():
+    _pending_greeting.pop(request.sid, None)
 
 
 @socketio.on("user_message")
