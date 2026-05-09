@@ -316,6 +316,7 @@ def log_question_pattern(intent: str, user_input: str, client):
         recent = log[-20:]
         summary = "\n".join(f"[{e['intent']}] {e['text']}" for e in recent)
         try:
+            import db as _db
             resp = client.messages.create(
                 model=MODEL_FAST,
                 max_tokens=150,
@@ -327,6 +328,7 @@ def log_question_pattern(intent: str, user_input: str, client):
                 ),
                 messages=[{"role": "user", "content": f"Recent questions:\n{summary}"}],
             )
+            _db.track_usage(MODEL_FAST, resp.usage.input_tokens, resp.usage.output_tokens)
             data["insights"] = resp.content[0].text.strip()
         except Exception:
             pass
@@ -338,6 +340,7 @@ def save_correction(user_input: str, prior_response: str, client):
     """Extract what was wrong and what the correct answer is, then persist it."""
     from config import MODEL_FAST
     try:
+        import db as _db
         resp = client.messages.create(
             model=MODEL_FAST,
             max_tokens=150,
@@ -353,6 +356,7 @@ def save_correction(user_input: str, prior_response: str, client):
                 ),
             }],
         )
+        _db.track_usage(MODEL_FAST, resp.usage.input_tokens, resp.usage.output_tokens)
         raw = resp.content[0].text.strip()
         raw = re.sub(r"```(?:json)?\n?", "", raw).replace("```", "").strip()
         parsed = json.loads(raw)

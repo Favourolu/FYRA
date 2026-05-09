@@ -2,6 +2,7 @@ import re
 import json
 from datetime import date
 
+import db as _db
 from config import (
     MODEL,
     MODEL_FAST,
@@ -53,6 +54,7 @@ def respond(user_input: str, memory_context: str, client, sid: str = "cli") -> s
         system=build_system_prompt(memory_context),
         messages=history,
     )
+    _db.track_usage(MODEL, response.usage.input_tokens, response.usage.output_tokens)
 
     reply = response.content[0].text.strip()
     history.append({"role": "assistant", "content": reply})
@@ -88,6 +90,7 @@ def respond_stream(user_input: str, memory_context: str, client, sid: str, on_to
                     full_response += chunk
                     yield chunk
             final = stream.get_final_message()
+        _db.track_usage(MODEL, final.usage.input_tokens, final.usage.output_tokens)
 
         if final.stop_reason != "tool_use":
             break
@@ -133,6 +136,7 @@ def extract_memory_update(user_input: str, intent: str, response_text: str, clie
             system=EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
         )
+        _db.track_usage(MODEL_FAST, response.usage.input_tokens, response.usage.output_tokens)
         raw = response.content[0].text.strip()
         raw = re.sub(r"```(?:json)?\n?", "", raw).replace("```", "").strip()
         return json.loads(raw)

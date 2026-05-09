@@ -1,3 +1,4 @@
+import db as _db
 from config import MODEL_FAST, INTENT_SYSTEM, INTENT_USER_TEMPLATE, VALID_INTENTS
 
 
@@ -14,6 +15,7 @@ def classify(user_input: str, client) -> str:
                 }
             ],
         )
+        _db.track_usage(MODEL_FAST, response.usage.input_tokens, response.usage.output_tokens)
         label = response.content[0].text.strip().lower()
         if label in VALID_INTENTS:
             return label

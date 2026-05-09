@@ -18,6 +18,8 @@ import anthropic
 import intent as intent_module
 import assistant
 import memory as memory_module
+import db as _db
+from db import BudgetExceeded
 from config import MODEL_FAST
 
 app = Flask(__name__)
@@ -101,6 +103,7 @@ def _generate_greeting(addressed_name: str, memory_context: str) -> str:
         ),
         messages=[{"role": "user", "content": f"Greet {addressed_name}. Time of day: {time_of_day}.\nContext:\n{context}"}],
     )
+    _db.track_usage(MODEL_FAST, response.usage.input_tokens, response.usage.output_tokens)
     return response.content[0].text.strip()
 
 
@@ -184,6 +187,18 @@ def handle_message(data):
         return
 
     sid = request.sid
+
+    try:
+        _db.check_budget()
+    except BudgetExceeded as e:
+        socketio.emit("stream_start", {}, to=sid)
+        socketio.emit("stream_chunk", {"text": str(e)}, to=sid)
+        socketio.emit("stream_end", {"intent": "error"}, to=sid)
+        audio = _tts(str(e))
+        if audio:
+            socketio.emit("audio_chunk", {"audio": audio}, to=sid)
+        return
+
     socketio.emit("status", {"state": "processing"}, to=sid)
 
     classified_intent = intent_module.classify(text, _client)
