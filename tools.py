@@ -43,7 +43,8 @@ def fetch_afriterminal_data(dataset):
     url = urls.get(dataset)
     if not url: return f"Unknown dataset '{dataset}'. Options: {list(urls.keys())}"
     try:
-        r = requests.get(url, timeout=15, headers={"User-Agent":"Fyra/1.0"})
+        import httpx
+        r = httpx.get(url, timeout=15, headers={"User-Agent":"Fyra/1.0"}, follow_redirects=True)
         r.raise_for_status()
         return f"[AfriTerminal · {dataset} · {datetime.now().strftime('%Y-%m-%d %H:%M')} WAT]\n{r.text[:8000]}"
     except Exception as e: return f"Could not fetch AfriTerminal {dataset}: {e}"
