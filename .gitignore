@@ -2,6 +2,7 @@
 memory/*.json
 logs/*.json
 logs/*.log
+*.db
 __pycache__/
 *.pyc
 *.pyo
