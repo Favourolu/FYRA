@@ -356,13 +356,12 @@ socket.on('stream_start', () => {
     isPlayingAudio = false;
     if (responseFadeTimer) clearTimeout(responseFadeTimer);
     orbResponse.textContent = '';
-    orbResponse.classList.add('visible');
+    orbResponse.classList.remove('visible');
 });
 
 socket.on('stream_chunk', data => {
     if (orbState === 'searching') setOrbState('processing');
     streamingText += data.text;
-    orbResponse.textContent = streamingText;
 });
 
 socket.on('tool_use', data => {
@@ -378,6 +377,10 @@ socket.on('audio_chunk', data => {
 
 socket.on('stream_end', data => {
     if (data.intent) lastIntentEl.textContent = data.intent;
+    if (streamingText) {
+        orbResponse.textContent = streamingText;
+        orbResponse.classList.add('visible');
+    }
     responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 15000);
     // Don't go idle here — let playNextChunk() handle it when audio actually finishes
 });
