@@ -1,7 +1,7 @@
 import requests
 from datetime import datetime
 
-AFRITERMINAL_BASE = "<https://favourolu.github.io/afriterminal>"
+AFRITERMINAL_BASE = "https://favourolu.github.io/afriterminal"
 
 TOOLS = [
     {"name":"web_search","description":"Search the internet for current information: news, weather, scores, prices, facts, or anything you are unsure about or that might have changed recently. Always prefer searching over saying you don't know.","input_schema":{"type":"object","properties":{"query":{"type":"string","description":"The search query"}},"required":["query"]}},
