@@ -33,7 +33,7 @@ function showResponse(text) {
     if (responseFadeTimer) clearTimeout(responseFadeTimer);
     orbResponse.textContent = text;
     orbResponse.classList.add('visible');
-    responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 15000);
+    responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 3000);
 }
 
 // ── Three.js Particle Orb ─────────────────────────────────────
@@ -402,7 +402,7 @@ socket.on('stream_end', data => {
         orbResponse.textContent = streamingText;
         orbResponse.classList.add('visible');
     }
-    responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 15000);
+    responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 3000);
     // Don't go idle here — let playNextChunk() handle it when audio actually finishes
 });
 
