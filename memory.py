@@ -160,15 +160,31 @@ def get_relevant_memory(intent: str, user_input: str) -> str:
 
     if intent == "market_query":
         with get_db_conn() as conn:
-            rows = conn.execute(
+            mood_rows = conn.execute(
                 "SELECT timestamp, person, mood, note FROM checkins ORDER BY id DESC LIMIT 2"
             ).fetchall()
-        if rows:
+        if mood_rows:
             lines = [
                 f"  [{r['timestamp'][:10]}] {r['person']}: {r['mood']} — {r['note']}"
-                for r in reversed(rows)
+                for r in reversed(mood_rows)
             ]
             sections.append("Recent emotional context:\n" + "\n".join(lines))
+
+        # Inject watchlists so Fyra always covers them first
+        with get_db_conn() as conn:
+            wl_rows = conn.execute(
+                "SELECT person, value FROM profiles WHERE field='watchlist'"
+            ).fetchall()
+        watchlist_lines = []
+        for r in wl_rows:
+            try:
+                tickers = json.loads(r["value"])
+                if tickers:
+                    watchlist_lines.append(f"  {r['person'].capitalize()}'s watchlist: {', '.join(tickers)}")
+            except Exception:
+                pass
+        if watchlist_lines:
+            sections.append("Watchlists (always cover these tickers first):\n" + "\n".join(watchlist_lines))
 
     return "\n\n".join(sections) if sections else "No memory stored yet."
 

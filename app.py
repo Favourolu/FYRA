@@ -308,6 +308,68 @@ def _scheduled_morning_brief():
         threading.Thread(target=_push_market_brief, args=(sid,), daemon=True).start()
 
 
+def _check_watchlist_alerts():
+    """Compare watchlist tickers against ngx_prices; alert on >3% moves."""
+    prices_raw = fetch_afriterminal_data("ngx_prices")
+    if "[FAILED]" in prices_raw:
+        return
+    import csv as _csv
+    body = "\n".join(prices_raw.split("\n")[1:]).strip()
+    price_map = {}
+    for row in _csv.DictReader(_io.StringIO(body)):
+        sym = (row.get("symbol") or "").strip().upper()
+        try:
+            price_map[sym] = float(row.get("price", 0) or 0)
+        except Exception:
+            continue
+
+    with _db.get_db_conn() as conn:
+        wl_rows = conn.execute(
+            "SELECT person, value FROM profiles WHERE field='watchlist'"
+        ).fetchall()
+
+    now_str = _dt.utcnow().isoformat()[:16]
+    alerts = []
+    for row in wl_rows:
+        person = row["person"]
+        try:
+            tickers = json.loads(row["value"])
+        except Exception:
+            continue
+        for ticker in tickers:
+            ticker_up = ticker.strip().upper()
+            if ticker_up not in price_map:
+                continue
+            current = price_map[ticker_up]
+            with _db.get_db_conn() as conn:
+                prev_row = conn.execute(
+                    "SELECT price FROM watchlist_prices WHERE person=? AND ticker=?",
+                    (person, ticker_up)
+                ).fetchone()
+            if prev_row and prev_row["price"]:
+                prev = prev_row["price"]
+                pct_change = abs(current - prev) / prev * 100 if prev else 0
+                if pct_change >= 3.0:
+                    direction = "up" if current > prev else "down"
+                    alerts.append(
+                        f"{ticker_up} is {direction} {pct_change:.1f}% to {current:.2f} for {person.capitalize()}"
+                    )
+            with _db.get_db_conn() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO watchlist_prices (person, ticker, price, checked_at) VALUES (?, ?, ?, ?)",
+                    (person, ticker_up, current, now_str)
+                )
+                conn.commit()
+
+    if alerts:
+        alert_text = "Watchlist alert: " + "; ".join(alerts) + "."
+        for sid, person in list(_connected_known.items()):
+            socketio.emit("proactive_brief", {"text": alert_text}, to=sid)
+            audio = _tts(alert_text)
+            if audio:
+                socketio.emit("audio_chunk", {"audio": audio}, to=sid)
+
+
 def _scheduled_market_monitor():
     global _last_market_ts
     if not _connected_known:
@@ -322,7 +384,6 @@ def _scheduled_market_monitor():
     ts = header_line[idx + len(ts_marker):].strip() if idx != -1 else ""
     if ts and ts != _last_market_ts and _last_market_ts:
         _last_market_ts = ts
-        # Compose a one-sentence alert from the new data
         try:
             resp = _client.messages.create(
                 model=MODEL_FAST,
@@ -341,6 +402,7 @@ def _scheduled_market_monitor():
             pass
     elif not _last_market_ts:
         _last_market_ts = ts
+    _check_watchlist_alerts()
 
 
 def _scheduled_eod_summary():
@@ -377,6 +439,46 @@ def _scheduled_eod_summary():
         audio = _tts(summary)
         if audio:
             socketio.emit("audio_chunk", {"audio": audio}, to=sid)
+
+
+def _check_notice(sid: str, intent: str, user_text: str):
+    """If a topic appears ≥4 times in the last 20 logged questions, send a one-off daily notice."""
+    from collections import Counter
+    try:
+        with _db.get_db_conn() as conn:
+            row = conn.execute("SELECT question_log FROM patterns WHERE id=1").fetchone()
+        if not row:
+            return
+        log = json.loads(row["question_log"] or "[]")
+        recent = log[-20:]
+        if len(recent) < 4:
+            return
+        counts = Counter(e["intent"] for e in recent if e.get("intent"))
+        topic, freq = counts.most_common(1)[0] if counts else (None, 0)
+        if not topic or freq < 4:
+            return
+
+        person = _connected_known.get(sid, "unknown")
+        today  = _dt.utcnow().strftime("%Y-%m-%d")
+        with _db.get_db_conn() as conn:
+            existing = conn.execute(
+                "SELECT id FROM notices WHERE person=? AND topic=? AND sent_at >= ?",
+                (person, topic, today + "T00:00:00")
+            ).fetchone()
+        if existing:
+            return
+
+        notice = f"You've been asking a lot about {topic.replace('_', ' ')} today — want me to add it to your morning brief?"
+        socketio.emit("proactive_brief", {"text": notice}, to=sid)
+
+        with _db.get_db_conn() as conn:
+            conn.execute(
+                "INSERT INTO notices (person, topic, sent_at) VALUES (?, ?, ?)",
+                (person, topic, _dt.utcnow().isoformat())
+            )
+            conn.commit()
+    except Exception:
+        pass
 
 
 try:
@@ -584,6 +686,7 @@ def handle_message(data):
     socketio.emit("stream_end", {"intent": classified_intent}, to=sid)
 
     memory_module.log_question_pattern(classified_intent, text, _client)
+    _check_notice(sid, classified_intent, text)
 
     if classified_intent == "correction":
         memory_module.save_correction(text, full_response, _client)

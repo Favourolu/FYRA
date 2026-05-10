@@ -97,7 +97,7 @@ Assistant responded: {response}
 Return JSON in one of these formats:
 
 For store_memory — profile update:
-{{"type": "profile", "person": "favour|fiyin|both", "key": "likes|dislikes|hobbies|facts|birthday|full_name", "value": <string or list>}}
+{{"type": "profile", "person": "favour|fiyin|both", "key": "likes|dislikes|hobbies|facts|birthday|full_name|watchlist", "value": <string or list>}}
 
 For store_memory — event:
 {{"type": "event", "event_type": "anniversary|trip|moment|milestone", "date": "YYYY-MM-DD or null", "title": "...", "description": "...", "tags": []}}
