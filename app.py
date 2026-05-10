@@ -678,7 +678,6 @@ def _emit_greeting(sid: str, addressed_name: str, memory_key: str):
         socketio.emit("audio_chunk", {"audio": audio}, to=sid)
     if memory_key in ("favour", "fiyin"):
         _connected_known[sid] = memory_key
-        threading.Thread(target=_push_market_brief, args=(sid,), daemon=True).start()
 
 
 @socketio.on("greeting_response")
