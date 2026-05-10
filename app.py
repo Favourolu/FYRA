@@ -45,6 +45,9 @@ _connected_known: dict = {}
 # Last AfriTerminal market_summary Last-Modified seen by the monitor job
 _last_market_ts: str = ""
 
+# sid → pre-built chart list, held until user requests it
+_pending_charts: dict = {}
+
 
 def _local_ip() -> str:
     try:
@@ -714,6 +717,7 @@ def on_disconnect():
     sid = request.sid
     _pending_greeting.pop(sid, None)
     _connected_known.pop(sid, None)
+    _pending_charts.pop(sid, None)
     assistant.clear_session(sid)
 
 
@@ -806,20 +810,29 @@ def handle_message(data):
     memory_module.save_conversation_turn(text, full_response)
     memory_module.log_interaction(text, classified_intent, full_response)
 
-    # Push chart(s) for market and filing queries in a background thread
+    # Pre-build chart in background and offer it; only emit when user requests
     if classified_intent in ("market_query", "filing_query"):
         _query_text = text
-        def _emit_chart():
+        def _prebuild_chart():
             dataset = _pick_chart_dataset(_query_text)
             raw = fetch_afriterminal_data(dataset)
             if "[FAILED]" not in raw:
                 charts = _build_chart_data(dataset, raw)
                 if charts:
-                    socketio.emit("chart_data", {"charts": charts}, to=sid)
-        threading.Thread(target=_emit_chart, daemon=True).start()
+                    _pending_charts[sid] = charts
+                    socketio.emit("chart_offer", {}, to=sid)
+        threading.Thread(target=_prebuild_chart, daemon=True).start()
 
     profile_data = memory_module.get_profile_panel_data()
     socketio.emit("profile_update", profile_data, to=sid)
+
+
+@socketio.on("request_chart")
+def handle_request_chart(_data=None):
+    sid = request.sid
+    charts = _pending_charts.pop(sid, None)
+    if charts:
+        socketio.emit("chart_data", {"charts": charts}, to=sid)
 
 
 @socketio.on("voice_sample")

@@ -407,11 +407,23 @@ socket.on('voice_id_result', data => {
 let greetingMode = false;
 
 // ── Send ──────────────────────────────────────────────────────
+const _chartAffirmatives = /^(yes|yeah|sure|show|show me|show chart|show it|ok|okay|yep|please|go ahead|do it)$/i;
+
 function sendMessage(text) {
     text = text.trim();
     if (!text) return;
     ensureAudioContext();
+
+    // If a chart offer is pending and user says yes, show it without sending to Claude
+    if (document.getElementById('chartOfferPill') && _chartAffirmatives.test(text)) {
+        dismissChartOffer();
+        socket.emit('request_chart');
+        textInput.value = '';
+        return;
+    }
+
     dismissChart();
+    dismissChartOffer();
 
     if (greetingMode === 'name') {
         greetingMode = false;
@@ -639,12 +651,35 @@ document.getElementById('chartPanel').addEventListener('click', e => {
 socket.on('chart_data', payload => {
     try {
         const list = payload.charts || (Array.isArray(payload) ? payload : [payload]);
+        dismissChartOffer();
         showCharts(list);
     } catch (e) { console.error('[Chart]', e); }
 });
 
-// Dismiss chart when user speaks
-const _origSendMessage = sendMessage;
+// ── Chart offer pill ──────────────────────────────────────────
+let _chartOfferTimer = null;
+
+function showChartOffer() {
+    dismissChartOffer();
+    const pill = document.createElement('button');
+    pill.id = 'chartOfferPill';
+    pill.textContent = 'Show chart';
+    pill.addEventListener('click', () => {
+        dismissChartOffer();
+        socket.emit('request_chart');
+    });
+    document.querySelector('.ui-container').appendChild(pill);
+    _chartOfferTimer = setTimeout(dismissChartOffer, 12000);
+}
+
+function dismissChartOffer() {
+    const el = document.getElementById('chartOfferPill');
+    if (el) el.remove();
+    if (_chartOfferTimer) { clearTimeout(_chartOfferTimer); _chartOfferTimer = null; }
+}
+
+socket.on('chart_offer', () => showChartOffer());
+
 document.getElementById('chartPanel').addEventListener('click', dismissChart);
 
 // ── Input ─────────────────────────────────────────────────────
