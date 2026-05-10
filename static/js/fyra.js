@@ -538,58 +538,104 @@ socket.on('proactive_brief', data => {
 });
 
 // ── Chart panel ───────────────────────────────────────────────
-let _chartInstance = null;
+let _chartInstance   = null;
 let _chartDismissTimer = null;
+let _chartList       = [];   // all charts for current query
+let _chartIndex      = 0;
 
-function showChart(payload) {
+const DOUGHNUT_COLORS = [
+    'rgba(0,200,120,0.7)', 'rgba(68,170,255,0.7)', 'rgba(255,180,0,0.7)',
+    'rgba(200,80,255,0.7)', 'rgba(255,80,100,0.7)', 'rgba(0,220,200,0.7)',
+];
+
+function _buildDatasets(type, datasets) {
+    return datasets.map(ds => {
+        const isDoughnut = type === 'doughnut' || type === 'pie';
+        const isLine     = type === 'line';
+        const base = { label: ds.label, data: ds.data, borderWidth: isLine ? 2 : 1 };
+        if (isDoughnut) {
+            base.backgroundColor = DOUGHNUT_COLORS.slice(0, ds.data.length);
+            base.borderColor = 'rgba(0,0,0,0.3)';
+        } else if (isLine) {
+            base.borderColor     = 'rgba(68,170,255,0.9)';
+            base.backgroundColor = 'rgba(68,170,255,0.12)';
+            base.fill            = true;
+            base.tension         = 0.35;
+            base.pointRadius     = 2;
+        } else {
+            base.backgroundColor = ds.data.map(v => v >= 0 ? 'rgba(0,200,120,0.55)' : 'rgba(255,60,80,0.55)');
+            base.borderColor     = ds.data.map(v => v >= 0 ? 'rgba(0,220,140,0.9)'  : 'rgba(255,80,100,0.9)');
+            base.borderRadius    = 4;
+        }
+        return base;
+    });
+}
+
+function _renderChart(idx) {
+    const payload = _chartList[idx];
+    if (!payload) return;
     const panel   = document.getElementById('chartPanel');
     const titleEl = document.getElementById('chartTitle');
     const canvas  = document.getElementById('chartCanvas');
+    const counter = document.getElementById('chartCounter');
 
     titleEl.textContent = payload.title || '';
+    counter.textContent = _chartList.length > 1 ? `${idx + 1} / ${_chartList.length}` : '';
 
     if (_chartInstance) { _chartInstance.destroy(); _chartInstance = null; }
-    if (_chartDismissTimer) clearTimeout(_chartDismissTimer);
+
+    const type = payload.type || 'bar';
+    const isDoughnut = type === 'doughnut' || type === 'pie';
 
     _chartInstance = new Chart(canvas, {
-        type: payload.type || 'bar',
+        type,
         data: {
-            labels: payload.labels || [],
-            datasets: (payload.datasets || []).map(ds => ({
-                label: ds.label,
-                data: ds.data,
-                backgroundColor: ds.data.map(v => v >= 0 ? 'rgba(0,200,120,0.55)' : 'rgba(255,60,80,0.55)'),
-                borderColor:     ds.data.map(v => v >= 0 ? 'rgba(0,220,140,0.9)' : 'rgba(255,80,100,0.9)'),
-                borderWidth: 1,
-                borderRadius: 4,
-            })),
+            labels:   payload.labels   || [],
+            datasets: _buildDatasets(type, payload.datasets || []),
         },
         options: {
             responsive: true,
             maintainAspectRatio: true,
             plugins: {
-                legend: { labels: { color: 'rgba(180,220,255,0.7)', font: { size: 10 } } },
+                legend: { labels: { color: 'rgba(180,220,255,0.7)', font: { size: 10 }, boxWidth: 12 } },
             },
-            scales: {
-                x: { ticks: { color: 'rgba(150,200,255,0.7)', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
-                y: { ticks: { color: 'rgba(150,200,255,0.7)', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
-            },
+            ...(isDoughnut ? {} : {
+                scales: {
+                    x: { ticks: { color: 'rgba(150,200,255,0.7)', font: { size: 9 }, maxRotation: 45 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: { ticks: { color: 'rgba(150,200,255,0.7)', font: { size: 9 } },                  grid: { color: 'rgba(255,255,255,0.05)' } },
+                },
+            }),
         },
     });
-
     panel.style.display = 'block';
-    _chartDismissTimer = setTimeout(() => dismissChart(), 10000);
+}
+
+function showCharts(list) {
+    if (!list || !list.length) return;
+    _chartList  = list;
+    _chartIndex = 0;
+    if (_chartDismissTimer) clearTimeout(_chartDismissTimer);
+    _renderChart(0);
+    _chartDismissTimer = setTimeout(() => dismissChart(), 15000);
 }
 
 function dismissChart() {
-    const panel = document.getElementById('chartPanel');
-    panel.style.display = 'none';
+    document.getElementById('chartPanel').style.display = 'none';
     if (_chartInstance) { _chartInstance.destroy(); _chartInstance = null; }
     if (_chartDismissTimer) { clearTimeout(_chartDismissTimer); _chartDismissTimer = null; }
+    _chartList = []; _chartIndex = 0;
 }
 
+document.getElementById('chartPanel').addEventListener('click', e => {
+    // Clicks on nav buttons handled by their own listeners — panel click = dismiss
+    if (!e.target.closest('.chart-nav')) dismissChart();
+});
+
 socket.on('chart_data', payload => {
-    try { showChart(payload); } catch (e) { console.error('[Chart]', e); }
+    try {
+        const list = payload.charts || (Array.isArray(payload) ? payload : [payload]);
+        showCharts(list);
+    } catch (e) { console.error('[Chart]', e); }
 });
 
 // Dismiss chart when user speaks
@@ -597,6 +643,19 @@ const _origSendMessage = sendMessage;
 document.getElementById('chartPanel').addEventListener('click', dismissChart);
 
 // ── Input ─────────────────────────────────────────────────────
+document.getElementById('chartPrev').addEventListener('click', e => {
+    e.stopPropagation();
+    if (_chartList.length < 2) return;
+    _chartIndex = (_chartIndex - 1 + _chartList.length) % _chartList.length;
+    _renderChart(_chartIndex);
+});
+document.getElementById('chartNext').addEventListener('click', e => {
+    e.stopPropagation();
+    if (_chartList.length < 2) return;
+    _chartIndex = (_chartIndex + 1) % _chartList.length;
+    _renderChart(_chartIndex);
+});
+
 sendBtn.addEventListener('click', () => sendMessage(textInput.value));
 textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(textInput.value); });
 textInput.addEventListener('input', () => {

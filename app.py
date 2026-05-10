@@ -125,70 +125,179 @@ def _generate_greeting(addressed_name: str, memory_context: str) -> str:
 
 
 def _build_chart_data(dataset: str, raw: str):
-    """Parse raw AfriTerminal text into Chart.js-ready dict. Returns None on failure."""
+    """Parse AfriTerminal raw text into a list of Chart.js-ready dicts. Returns [] on failure."""
+    charts = []
     try:
-        body = "\n".join(raw.split("\n")[1:]).strip()  # strip header line
+        body = "\n".join(raw.split("\n")[1:]).strip()  # strip AfriTerminal header
+
         if dataset == "market_summary":
-            data = json.loads(body)
+            data    = json.loads(body)
             gainers = data.get("top_gainers", [])[:8]
-            if not gainers:
-                return None
-            # Field names from actual AfriTerminal digest.json: ticker, change
-            return {
-                "type": "bar", "title": "NGX Top Gainers",
-                "labels": [g.get("ticker") or g.get("symbol", "") for g in gainers],
-                "datasets": [{"label": "Change %",
-                              "data": [round(float(g.get("change") or g.get("change_pct", 0)), 2) for g in gainers]}],
-            }
+            losers  = data.get("top_losers",  [])[:8]
+            breadth = data.get("market", {})
+            if gainers:
+                charts.append({
+                    "type": "bar", "title": "NGX Top Gainers",
+                    "labels": [g.get("ticker") or g.get("symbol", "") for g in gainers],
+                    "datasets": [{"label": "Change %",
+                                  "data": [round(float(g.get("change") or g.get("change_pct", 0)), 2) for g in gainers]}],
+                })
+            if losers:
+                charts.append({
+                    "type": "bar", "title": "NGX Top Losers",
+                    "labels": [l.get("ticker") or l.get("symbol", "") for l in losers],
+                    "datasets": [{"label": "Change %",
+                                  "data": [round(float(l.get("change") or l.get("change_pct", 0)), 2) for l in losers]}],
+                })
+            if breadth:
+                charts.append({
+                    "type": "doughnut", "title": "Market Breadth",
+                    "labels": ["Gainers", "Decliners", "Unchanged"],
+                    "datasets": [{"label": "Stocks",
+                                  "data": [breadth.get("gainers", 0), breadth.get("decliners", 0), breadth.get("unchanged", 0)]}],
+                })
+
         elif dataset == "ngx_prices":
+            # CSV: Ticker,Name,Price,Change%,Timestamp
             rows = []
             for row in csv.DictReader(_io.StringIO(body)):
                 try:
-                    rows.append({"symbol": row.get("symbol", ""),
-                                 "volume": float(row.get("volume", 0) or 0),
-                                 "change_pct": float(row.get("change_pct", 0) or 0)})
+                    chg = float(row.get("Change%", 0) or 0)
+                    rows.append({"symbol": row.get("Ticker", ""), "change_pct": chg})
                 except Exception:
                     continue
-            rows.sort(key=lambda r: r["volume"], reverse=True)
-            top = rows[:10]
-            if not top:
-                return None
-            return {
-                "type": "bar", "title": "NGX Top by Volume",
-                "labels": [r["symbol"] for r in top],
-                "datasets": [{"label": "Change %",
-                              "data": [round(r["change_pct"], 2) for r in top]}],
-            }
+            gainers = sorted([r for r in rows if r["change_pct"] > 0], key=lambda r: r["change_pct"], reverse=True)[:10]
+            losers  = sorted([r for r in rows if r["change_pct"] < 0], key=lambda r: r["change_pct"])[:8]
+            if gainers:
+                charts.append({
+                    "type": "bar", "title": "NGX Top Gainers (Live)",
+                    "labels": [r["symbol"] for r in gainers],
+                    "datasets": [{"label": "Change %", "data": [round(r["change_pct"], 2) for r in gainers]}],
+                })
+            if losers:
+                charts.append({
+                    "type": "bar", "title": "NGX Top Losers (Live)",
+                    "labels": [r["symbol"] for r in losers],
+                    "datasets": [{"label": "Change %", "data": [round(r["change_pct"], 2) for r in losers]}],
+                })
+
         elif dataset == "fx":
+            # CSV: Currency,Rate_vs_USD,Updated
             rows = []
             for row in csv.DictReader(_io.StringIO(body)):
                 try:
-                    rows.append({"currency": row.get("currency", ""),
-                                 "rate": float(row.get("rate", 0) or 0)})
+                    rows.append({"currency": row.get("Currency", ""),
+                                 "rate": float(row.get("Rate_vs_USD", 0) or 0)})
                 except Exception:
                     continue
-            if not rows:
-                return None
-            return {
-                "type": "bar", "title": "FX Rates vs NGN",
-                "labels": [r["currency"] for r in rows],
-                "datasets": [{"label": "NGN per unit",
-                              "data": [round(r["rate"], 2) for r in rows]}],
-            }
+            if rows:
+                charts.append({
+                    "type": "bar", "title": "African Currencies vs USD",
+                    "labels": [r["currency"] for r in rows],
+                    "datasets": [{"label": "Units per USD", "data": [round(r["rate"], 2) for r in rows]}],
+                })
+
+        elif dataset == "bonds":
+            data      = json.loads(body)
+            countries = data.get("countries", {})
+            for country, info in list(countries.items())[:4]:
+                curve = info.get("yield_curve", [])
+                if curve:
+                    charts.append({
+                        "type": "line", "title": f"{country} Bond Yield Curve",
+                        "labels": [p.get("tenor", "") for p in curve],
+                        "datasets": [{"label": "Yield %",
+                                      "data": [round(float(p.get("yield", 0)), 2) for p in curve]}],
+                    })
+
+        elif dataset == "macro":
+            # CSV: Country,Indicator,Value,Year
+            by_indicator: dict = {}
+            for row in csv.DictReader(_io.StringIO(body)):
+                ind, country = row.get("Indicator", ""), row.get("Country", "")
+                try:
+                    val = float(row.get("Value", 0) or 0)
+                except Exception:
+                    continue
+                by_indicator.setdefault(ind, {})[country] = val
+
+            for ind_name, country_vals in by_indicator.items():
+                if not country_vals:
+                    continue
+                divisor = 1e9 if "GDP" in ind_name else 1
+                label   = ind_name.replace("(USD)", "(B USD)") if divisor > 1 else ind_name
+                charts.append({
+                    "type": "bar", "title": ind_name,
+                    "labels": list(country_vals.keys()),
+                    "datasets": [{"label": label,
+                                  "data": [round(v / divisor, 2) for v in country_vals.values()]}],
+                })
+
         elif dataset == "global":
-            data = json.loads(body)
-            items = (data if isinstance(data, list) else [])[:8]
-            if not items:
-                return None
-            return {
-                "type": "bar", "title": "Global Indices",
-                "labels": [i.get("symbol", "") for i in items],
-                "datasets": [{"label": "Change %",
-                              "data": [round(float(i.get("change_pct", 0)), 2) for i in items]}],
-            }
-    except Exception:
-        pass
-    return None
+            data    = json.loads(body)
+            indices = data.get("indices", [])[:8]
+            if indices:
+                charts.append({
+                    "type": "bar", "title": "Global Markets — Change %",
+                    "labels": [i.get("name") or i.get("ticker", "") for i in indices],
+                    "datasets": [{"label": "Change %",
+                                  "data": [round(float(i.get("change_pct", 0)), 2) for i in indices]}],
+                })
+            for idx in indices[:2]:
+                hist = idx.get("chart_1mo", [])
+                if len(hist) > 5:
+                    charts.append({
+                        "type": "line", "title": f"{idx.get('name', '')} — 1 Month",
+                        "labels": [p.get("t", "")[-5:] for p in hist],
+                        "datasets": [{"label": "Close",
+                                      "data": [round(float(p.get("c", 0)), 2) for p in hist]}],
+                    })
+
+        elif dataset == "market_flows":
+            data   = json.loads(body)
+            period = data.get("period", "")
+            charts.append({
+                "type": "doughnut", "title": f"Market Participation ({period})",
+                "labels": ["Domestic Institutional", "Domestic Retail", "Foreign Net"],
+                "datasets": [{"label": "₦ Trillions",
+                              "data": [
+                                  round(data.get("domestic_institutional", 0) / 1e12, 2),
+                                  round(data.get("domestic_retail",        0) / 1e12, 2),
+                                  round(abs(data.get("foreign_net",        0)) / 1e12, 3),
+                              ]}],
+            })
+            charts.append({
+                "type": "bar", "title": f"Foreign Flows ({period})",
+                "labels": ["Inflows", "Outflows", "Net"],
+                "datasets": [{"label": "₦ Billions",
+                              "data": [
+                                  round(data.get("foreign_inflows",  0) / 1e9, 1),
+                                  round(data.get("foreign_outflows", 0) / 1e9, 1),
+                                  round(data.get("foreign_net",      0) / 1e9, 1),
+                              ]}],
+            })
+
+    except Exception as e:
+        print(f"[Chart] parse error for {dataset}: {e}")
+    return charts
+
+
+def _pick_chart_dataset(user_text: str) -> str:
+    """Choose the most relevant AfriTerminal dataset to chart based on the user's query."""
+    lower = user_text.lower()
+    if any(w in lower for w in ("fx", "exchange rate", "naira", "dollar", "pound", "euro", "currency", "usd", "gbp")):
+        return "fx"
+    if any(w in lower for w in ("bond", "yield", "treasury", "sovereign", "fgn bond", "tenor", "debt")):
+        return "bonds"
+    if any(w in lower for w in ("global", "s&p", "s&p 500", "ftse", "dow", "nikkei", "nasdaq", "dax", "oil", "gold", "international", "world market")):
+        return "global"
+    if any(w in lower for w in ("flow", "institutional", "foreign investor", "participation", "retail investor", "turnover", "capital")):
+        return "market_flows"
+    if any(w in lower for w in ("inflation", "gdp", "macro", "unemployment", "growth rate", "cpi", "economy")):
+        return "macro"
+    if any(w in lower for w in ("price", "live", "all share", "ngx stock", "stock price", "share price")):
+        return "ngx_prices"
+    return "market_summary"
 
 
 def _push_market_brief(sid: str):
@@ -698,14 +807,16 @@ def handle_message(data):
     memory_module.save_conversation_turn(text, full_response)
     memory_module.log_interaction(text, classified_intent, full_response)
 
-    # Push chart data for market queries in a background thread
-    if classified_intent == "market_query":
+    # Push chart(s) for market and filing queries in a background thread
+    if classified_intent in ("market_query", "filing_query"):
+        _query_text = text
         def _emit_chart():
-            raw = fetch_afriterminal_data("market_summary")
+            dataset = _pick_chart_dataset(_query_text)
+            raw = fetch_afriterminal_data(dataset)
             if "[FAILED]" not in raw:
-                chart = _build_chart_data("market_summary", raw)
-                if chart:
-                    socketio.emit("chart_data", chart, to=sid)
+                charts = _build_chart_data(dataset, raw)
+                if charts:
+                    socketio.emit("chart_data", {"charts": charts}, to=sid)
         threading.Thread(target=_emit_chart, daemon=True).start()
 
     profile_data = memory_module.get_profile_panel_data()

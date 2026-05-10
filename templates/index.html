@@ -28,8 +28,16 @@
 
         <!-- Chart overlay panel -->
         <div class="chart-panel" id="chartPanel" style="display:none">
-            <div class="chart-title" id="chartTitle"></div>
+            <div class="chart-header">
+                <div class="chart-title" id="chartTitle"></div>
+                <div class="chart-nav">
+                    <button id="chartPrev">&#8249;</button>
+                    <span id="chartCounter"></span>
+                    <button id="chartNext">&#8250;</button>
+                </div>
+            </div>
             <canvas id="chartCanvas"></canvas>
+            <div class="chart-hint">tap panel to close</div>
         </div>
 
         <!-- Input bar -->
