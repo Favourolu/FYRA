@@ -1,3 +1,4 @@
+import os
 import requests
 from datetime import datetime
 
@@ -10,13 +11,35 @@ TOOLS = [
 ]
 
 def web_search(query):
+    tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
+    if tavily_key:
+        try:
+            r = requests.post(
+                "https://api.tavily.com/search",
+                json={"api_key": tavily_key, "query": query, "max_results": 5, "search_depth": "basic"},
+                timeout=12,
+            )
+            r.raise_for_status()
+            data = r.json()
+            results = data.get("results", [])
+            if not results:
+                return "[FAILED] Web search returned no results."
+            return "\n---\n".join(
+                f"Title: {res['title']}\nURL: {res['url']}\nSummary: {res.get('content','')}"
+                for res in results
+            )
+        except Exception as e:
+            return f"[FAILED] Web search error: {e}"
+    # Fallback: ddgs (works locally; may be rate-limited on cloud IPs)
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
         with DDGS() as ddg:
             results = list(ddg.text(query, max_results=5))
-        if not results: return "[FAILED] Web search returned no results."
+        if not results:
+            return "[FAILED] Web search returned no results."
         return "\n---\n".join(f"Title: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}" for r in results)
-    except Exception as e: return f"[FAILED] Web search error: {e}"
+    except Exception as e:
+        return f"[FAILED] Web search error: {e}"
 
 def fetch_page(url):
     try:

@@ -6,7 +6,7 @@ flask
 flask-socketio
 simple-websocket
 gunicorn
-duckduckgo-search
+ddgs
 beautifulsoup4
 httpx
 apscheduler>=3.10,<4.0
