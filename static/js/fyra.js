@@ -208,21 +208,8 @@ function ensureAudioContext() {
 function playNextChunk() {
     if (audioQueue.length === 0) {
         isPlayingAudio = false;
+        _fyraPlaying   = false;
         if (orbState === 'speaking') setOrbState('idle');
-        // Auto-open mic 400ms after last audio chunk ends (continuous voice mode)
-        if (!vadActive && !greetingMode) {
-            setTimeout(() => {
-                _fyraPlaying = false;
-                if (orbState === 'idle' && !vadActive && !greetingMode) {
-                    startVAD();
-                    _autoListenTimer = setTimeout(() => {
-                        if (vadActive && orbState === 'listening') stopVAD(false);
-                    }, 4000);
-                }
-            }, 400);
-        } else {
-            _fyraPlaying = false;
-        }
         return;
     }
     isPlayingAudio = true;

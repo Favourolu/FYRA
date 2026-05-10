@@ -133,11 +133,12 @@ def _build_chart_data(dataset: str, raw: str):
             gainers = data.get("top_gainers", [])[:8]
             if not gainers:
                 return None
+            # Field names from actual AfriTerminal digest.json: ticker, change
             return {
                 "type": "bar", "title": "NGX Top Gainers",
-                "labels": [g.get("symbol", "") for g in gainers],
+                "labels": [g.get("ticker") or g.get("symbol", "") for g in gainers],
                 "datasets": [{"label": "Change %",
-                              "data": [round(float(g.get("change_pct", 0)), 2) for g in gainers]}],
+                              "data": [round(float(g.get("change") or g.get("change_pct", 0)), 2) for g in gainers]}],
             }
         elif dataset == "ngx_prices":
             rows = []
@@ -226,11 +227,6 @@ def _push_market_brief(sid: str):
     audio = _tts(brief)
     if audio:
         socketio.emit("audio_chunk", {"audio": audio}, to=sid)
-
-    if "[FAILED]" not in market_raw:
-        chart = _build_chart_data("market_summary", market_raw)
-        if chart:
-            socketio.emit("chart_data", chart, to=sid)
 
 
 # ── Google Calendar helpers ───────────────────────────────────
