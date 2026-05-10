@@ -564,7 +564,10 @@ def _emit_greeting(sid: str, addressed_name: str, memory_key: str):
     greeting = _generate_greeting(addressed_name, ctx)
     socketio.emit("stream_start", {}, to=sid)
     socketio.emit("stream_chunk", {"text": greeting}, to=sid)
-    socketio.emit("stream_end", {"intent": "greeting"}, to=sid)
+    end_payload = {"intent": "greeting"}
+    if memory_key in ("favour", "fiyin"):
+        end_payload["person"] = memory_key
+    socketio.emit("stream_end", end_payload, to=sid)
     audio = _tts(greeting)
     if audio:
         socketio.emit("audio_chunk", {"audio": audio}, to=sid)
@@ -711,6 +714,89 @@ def handle_message(data):
 
     profile_data = memory_module.get_profile_panel_data()
     socketio.emit("profile_update", profile_data, to=sid)
+
+
+@socketio.on("voice_sample")
+def handle_voice_sample(data):
+    """Receive acoustic feature sample from browser; match or store."""
+    sid     = request.sid
+    avg_rms = float(data.get("avg_rms", 0))
+    if avg_rms <= 0:
+        return
+
+    # Load existing voice profiles
+    with _db.get_db_conn() as conn:
+        profiles = conn.execute(
+            "SELECT person, avg_rms, sample_count FROM voice_profiles"
+        ).fetchall()
+
+    best_match = None
+    best_dist  = float("inf")
+    for p in profiles:
+        if not p["avg_rms"] or p["sample_count"] < 3:
+            continue
+        dist = abs(avg_rms - p["avg_rms"])
+        # Relative distance — must be within 25%
+        if p["avg_rms"] > 0 and dist / p["avg_rms"] < 0.25 and dist < best_dist:
+            best_dist  = dist
+            best_match = p["person"]
+
+    if best_match:
+        # High confidence match — skip name prompt
+        socketio.emit("voice_id_result", {"matched": True, "person": best_match}, to=sid)
+        # Update running average
+        for p in profiles:
+            if p["person"] == best_match:
+                n   = p["sample_count"]
+                new_avg = (p["avg_rms"] * n + avg_rms) / (n + 1)
+                with _db.get_db_conn() as conn:
+                    conn.execute(
+                        "UPDATE voice_profiles SET avg_rms=?, sample_count=? WHERE person=?",
+                        (new_avg, n + 1, best_match)
+                    )
+                    conn.commit()
+    else:
+        # No match — server waits; client will fall through to name prompt
+        # Store this sample temporarily keyed by sid for learning after greeting
+        socketio.emit("voice_id_result", {"matched": False}, to=sid)
+        # Persist the RMS against the session's person once identified (via voice_learn_confirm)
+        _pending_voice[sid] = avg_rms
+
+
+_pending_voice: dict = {}  # sid → avg_rms collected before identity confirmed
+
+
+@socketio.on("voice_learn_confirm")
+def handle_voice_learn_confirm(data):
+    """After greeting completes, attribute the pre-collected voice sample to the person."""
+    sid    = request.sid
+    person = data.get("person", "").lower()
+    if person not in ("favour", "fiyin"):
+        return
+    avg_rms = _pending_voice.pop(sid, None)
+    if avg_rms is None:
+        return
+    with _db.get_db_conn() as conn:
+        existing = conn.execute(
+            "SELECT avg_rms, sample_count FROM voice_profiles WHERE person=?", (person,)
+        ).fetchone()
+    if existing and existing["sample_count"]:
+        n = existing["sample_count"]
+        new_avg = (existing["avg_rms"] * n + avg_rms) / (n + 1)
+        with _db.get_db_conn() as conn:
+            conn.execute(
+                "UPDATE voice_profiles SET avg_rms=?, sample_count=? WHERE person=?",
+                (new_avg, n + 1, person)
+            )
+            conn.commit()
+    else:
+        with _db.get_db_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO voice_profiles (person, avg_rms, pitch_mean, pitch_std, sample_count) VALUES (?, ?, NULL, NULL, 1)",
+                (person, avg_rms)
+            )
+            conn.commit()
+    socketio.emit("voice_learn", {}, to=sid)
 
 
 @socketio.on("set_voice")

@@ -356,6 +356,64 @@ micBtn.addEventListener('click', () => {
     vadActive ? stopVAD(true) : startVAD();
 });
 
+// ── Voice ID ──────────────────────────────────────────────────
+let _voiceIdSampling   = false;
+let _voiceIdAnalyser   = null;
+let _voiceIdStream     = null;
+let _voiceIdSamples    = [];  // collected RMS values
+const VOICE_ID_SECS    = 3;
+
+async function _collectVoiceSample() {
+    if (_voiceIdSampling) return;
+    _voiceIdSampling = true;
+    _voiceIdSamples  = [];
+    try {
+        ensureAudioContext();
+        const stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        const source   = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        _voiceIdStream   = stream;
+        _voiceIdAnalyser = analyser;
+
+        const freqBuf = new Float32Array(analyser.frequencyBinCount);
+        const timeBuf = new Float32Array(analyser.fftSize);
+        const endTime = Date.now() + VOICE_ID_SECS * 1000;
+
+        function sample() {
+            if (Date.now() >= endTime || !_voiceIdSampling) {
+                // Finish and send
+                stream.getTracks().forEach(t => t.stop());
+                _voiceIdSampling = false;
+                if (_voiceIdSamples.length > 0) {
+                    const avgRms  = _voiceIdSamples.reduce((a, b) => a + b, 0) / _voiceIdSamples.length;
+                    socket.emit('voice_sample', { avg_rms: avgRms });
+                }
+                return;
+            }
+            analyser.getFloatTimeDomainData(timeBuf);
+            let sum = 0;
+            for (let s of timeBuf) sum += s * s;
+            _voiceIdSamples.push(Math.sqrt(sum / timeBuf.length));
+            requestAnimationFrame(sample);
+        }
+        sample();
+    } catch (e) {
+        _voiceIdSampling = false;
+    }
+}
+
+socket.on('voice_id_result', data => {
+    if (data.matched && data.person) {
+        // Server recognised the voice — skip name prompt, emit as greeting
+        greetingMode = false;
+        textInput.placeholder = 'ask fyra anything...';
+        socket.emit('greeting_response', { text: data.person });
+    }
+    // If not matched, fall through to the normal name prompt (already shown)
+});
+
 // ── Greeting mode ─────────────────────────────────────────────
 // false | 'name' | 'gender'
 let greetingMode = false;
@@ -424,6 +482,10 @@ socket.on('stream_end', data => {
         orbResponse.classList.add('visible');
     }
     responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 3000);
+    // After greeting completes, send voice sample attribution if we have one
+    if (data.intent === 'greeting' && data.person) {
+        socket.emit('voice_learn_confirm', { person: data.person });
+    }
     // Don't go idle here — let playNextChunk() handle it when audio actually finishes
 });
 
@@ -457,6 +519,15 @@ socket.on('greeting_prompt', data => {
         audioQueue.push(data.audio);
         if (!isPlayingAudio) playNextChunk();
     }
+    // Silently try voice recognition in parallel with the name prompt
+    setTimeout(() => _collectVoiceSample(), 500);
+});
+
+socket.on('voice_learn', () => {
+    // Collect a training sample for the identified person
+    setTimeout(() => {
+        _collectVoiceSample();
+    }, 800);
 });
 
 socket.on('greeting_ask_gender', data => {
