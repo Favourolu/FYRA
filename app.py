@@ -28,6 +28,11 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
+FYRA_TOKEN = os.getenv("FYRA_ACCESS_TOKEN", "").strip()
+
+# sid → "favour" | "fiyin" — tracks connected known users for proactive features
+_connected_known: dict = {}
+
 
 def _local_ip() -> str:
     try:
@@ -120,6 +125,9 @@ def index():
 @socketio.on("connect")
 def on_connect():
     sid = request.sid
+    if FYRA_TOKEN and request.args.get("token", "") != FYRA_TOKEN:
+        return False  # reject unauthorised connection
+
     profile_data = memory_module.get_profile_panel_data()
     socketio.emit("profile_update", profile_data, to=sid)
 
@@ -142,6 +150,8 @@ def _emit_greeting(sid: str, addressed_name: str, memory_key: str):
     audio = _tts(greeting)
     if audio:
         socketio.emit("audio_chunk", {"audio": audio}, to=sid)
+    if memory_key in ("favour", "fiyin"):
+        _connected_known[sid] = memory_key
 
 
 @socketio.on("greeting_response")
@@ -177,6 +187,7 @@ def handle_greeting_gender(data):
 def on_disconnect():
     sid = request.sid
     _pending_greeting.pop(sid, None)
+    _connected_known.pop(sid, None)
     assistant.clear_session(sid)
 
 

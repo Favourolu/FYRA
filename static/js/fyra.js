@@ -1,5 +1,6 @@
 // ── SocketIO ─────────────────────────────────────────────────
-const socket = io();
+const _token = new URLSearchParams(window.location.search).get('token') || '';
+const socket = io({ query: { token: _token } });
 
 // ── DOM ──────────────────────────────────────────────────────
 const canvas       = document.getElementById('orbCanvas');

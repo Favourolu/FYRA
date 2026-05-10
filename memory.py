@@ -1,68 +1,13 @@
-import re
 import json
 import uuid
 import logging
 from datetime import datetime, date
 from pathlib import Path
 
-from config import (
-    MEMORY_DIR,
-    LOGS_DIR,
-    MAX_MEMORY_ITEMS,
-)
+from config import LOGS_DIR, MAX_MEMORY_ITEMS
+from db import get_db_conn, _write_lock
 
-_DEFAULT_PROFILES = {
-    "favour": {
-        "full_name": "Favour",
-        "birthday": None,
-        "likes": [],
-        "dislikes": [],
-        "hobbies": [],
-        "facts": [],
-    },
-    "fiyin": {
-        "full_name": "Fiyin",
-        "birthday": None,
-        "likes": [],
-        "dislikes": [],
-        "hobbies": [],
-        "facts": [],
-    },
-}
-
-CONVERSATION_FILE = LOGS_DIR / "conversation.json"
-PATTERNS_FILE = LOGS_DIR / "patterns.json"
-CORRECTIONS_FILE = MEMORY_DIR / "corrections.json"
 MAX_CONVERSATION = 200
-
-
-def _init_files():
-    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-    defaults = {
-        MEMORY_DIR / "profiles.json": _DEFAULT_PROFILES,
-        MEMORY_DIR / "events.json": [],
-        MEMORY_DIR / "checkins.json": [],
-        MEMORY_DIR / "plans.json": [],
-    }
-    for path, default in defaults.items():
-        if not path.exists():
-            path.write_text(json.dumps(default, indent=2))
-
-    if not CONVERSATION_FILE.exists():
-        CONVERSATION_FILE.write_text("[]")
-    if not PATTERNS_FILE.exists():
-        PATTERNS_FILE.write_text(json.dumps({"question_log": [], "insights": ""}, indent=2))
-    if not CORRECTIONS_FILE.exists():
-        CORRECTIONS_FILE.write_text("[]")
-
-    log_path = LOGS_DIR / "interactions.log"
-    if not log_path.exists():
-        log_path.touch()
-
-
-_init_files()
 
 logging.basicConfig(
     filename=str(LOGS_DIR / "interactions.log"),
@@ -71,24 +16,95 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 
+# Ensure logs dir exists for the log file
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+_log_path = LOGS_DIR / "interactions.log"
+if not _log_path.exists():
+    _log_path.touch()
 
-def _read(filename: str):
-    path = MEMORY_DIR / filename
-    return json.loads(path.read_text())
+
+# ── Internal helpers ──────────────────────────────────────────
+
+def _profile_to_dict(rows) -> dict:
+    """Convert profile rows (person, field, value) into nested dict."""
+    result = {}
+    for row in rows:
+        person = row["person"]
+        field  = row["field"]
+        raw    = row["value"]
+        try:
+            value = json.loads(raw)
+        except Exception:
+            value = raw
+        if person not in result:
+            result[person] = {}
+        result[person][field] = value
+    return result
 
 
-def _write(filename: str, data):
-    path = MEMORY_DIR / filename
-    path.write_text(json.dumps(data, indent=2))
+def _get_profile(person: str) -> dict:
+    with get_db_conn() as conn:
+        rows = conn.execute(
+            "SELECT person, field, value FROM profiles WHERE person = ?", (person,)
+        ).fetchall()
+    p = _profile_to_dict(rows).get(person, {})
+    return p
 
+
+def _set_profile_field(person: str, field: str, value):
+    v = json.dumps(value) if isinstance(value, (list, dict)) else (value or "")
+    with _write_lock:
+        with get_db_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO profiles (person, field, value) VALUES (?, ?, ?)",
+                (person, field, v)
+            )
+            conn.commit()
+
+
+# ── Public API ────────────────────────────────────────────────
 
 def load_all() -> dict:
-    return {
-        "profiles": _read("profiles.json"),
-        "events": _read("events.json"),
-        "checkins": _read("checkins.json"),
-        "plans": _read("plans.json"),
-    }
+    with get_db_conn() as conn:
+        profile_rows = conn.execute("SELECT person, field, value FROM profiles").fetchall()
+        event_rows   = conn.execute("SELECT * FROM events ORDER BY date ASC").fetchall()
+        checkin_rows = conn.execute("SELECT * FROM checkins ORDER BY id ASC").fetchall()
+        plan_rows    = conn.execute("SELECT * FROM plans ORDER BY created_at ASC").fetchall()
+
+    profiles = _profile_to_dict(profile_rows)
+
+    events = []
+    for r in event_rows:
+        events.append({
+            "id": r["id"],
+            "type": r["event_type"],        # remap event_type → "type" for compat
+            "date": r["date"],
+            "title": r["title"],
+            "description": r["description"],
+            "tags": json.loads(r["tags"] or "[]"),
+        })
+
+    checkins = []
+    for r in checkin_rows:
+        checkins.append({
+            "timestamp": r["timestamp"],
+            "person": r["person"],
+            "mood": r["mood"],
+            "note": r["note"],
+        })
+
+    plans = []
+    for r in plan_rows:
+        plans.append({
+            "id": r["id"],
+            "type": r["plan_type"],
+            "title": r["title"],
+            "description": r["description"],
+            "status": r["status"],
+            "created_at": r["created_at"],
+        })
+
+    return {"profiles": profiles, "events": events, "checkins": checkins, "plans": plans}
 
 
 def get_relevant_memory(intent: str, user_input: str) -> str:
@@ -108,7 +124,7 @@ def get_relevant_memory(intent: str, user_input: str) -> str:
 
     if intent in ("retrieve_memory", "store_memory", "general_chat", "task_help"):
         favour_summary = _profile_summary("favour", mem["profiles"].get("favour", {}))
-        fiyin_summary = _profile_summary("fiyin", mem["profiles"].get("fiyin", {}))
+        fiyin_summary  = _profile_summary("fiyin",  mem["profiles"].get("fiyin",  {}))
         sections.append("Profiles:\n" + favour_summary + "\n" + fiyin_summary)
 
     if intent in ("retrieve_memory", "store_memory"):
@@ -142,6 +158,18 @@ def get_relevant_memory(intent: str, user_input: str) -> str:
             ]
             sections.append("Plans & tasks:\n" + "\n".join(plan_lines))
 
+    if intent == "market_query":
+        with get_db_conn() as conn:
+            rows = conn.execute(
+                "SELECT timestamp, person, mood, note FROM checkins ORDER BY id DESC LIMIT 2"
+            ).fetchall()
+        if rows:
+            lines = [
+                f"  [{r['timestamp'][:10]}] {r['person']}: {r['mood']} — {r['note']}"
+                for r in reversed(rows)
+            ]
+            sections.append("Recent emotional context:\n" + "\n".join(lines))
+
     return "\n\n".join(sections) if sections else "No memory stored yet."
 
 
@@ -154,87 +182,103 @@ def apply_memory_update(extracted):
     kind = extracted.get("type")
 
     if kind == "profile":
-        profiles = _read("profiles.json")
         person = extracted.get("person", "").lower()
-        key = extracted.get("key")
-        value = extracted.get("value")
+        key    = extracted.get("key")
+        value  = extracted.get("value")
 
         targets = ["favour", "fiyin"] if person == "both" else [person]
         for t in targets:
-            if t not in profiles:
-                continue
             if key in ("likes", "dislikes", "hobbies", "facts"):
-                existing = profiles[t].get(key, [])
+                current = _get_profile(t).get(key, [])
                 new_items = value if isinstance(value, list) else [value]
                 for item in new_items:
-                    if item not in existing:
-                        existing.append(item)
-                profiles[t][key] = existing
+                    if item not in current:
+                        current.append(item)
+                _set_profile_field(t, key, current)
             else:
-                profiles[t][key] = value
-        _write("profiles.json", profiles)
+                _set_profile_field(t, key, value)
 
     elif kind == "event":
-        events = _read("events.json")
-        events.append({
-            "id": str(uuid.uuid4()),
-            "type": extracted.get("event_type", "moment"),
-            "date": extracted.get("date"),
-            "title": extracted.get("title", ""),
-            "description": extracted.get("description", ""),
-            "tags": extracted.get("tags", []),
-        })
-        _write("events.json", events)
+        with _write_lock:
+            with get_db_conn() as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO events (id, event_type, date, title, description, tags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid.uuid4()),
+                        extracted.get("event_type", "moment"),
+                        extracted.get("date"),
+                        extracted.get("title", ""),
+                        extracted.get("description", ""),
+                        json.dumps(extracted.get("tags", [])),
+                        datetime.utcnow().isoformat(),
+                    )
+                )
+                conn.commit()
 
     elif kind == "checkin":
-        checkins = _read("checkins.json")
-        checkins.append({
-            "timestamp": datetime.utcnow().isoformat(),
-            "person": extracted.get("person", "both"),
-            "mood": extracted.get("mood", ""),
-            "note": extracted.get("note", ""),
-        })
-        _write("checkins.json", checkins)
+        with _write_lock:
+            with get_db_conn() as conn:
+                conn.execute(
+                    "INSERT INTO checkins (timestamp, person, mood, note) VALUES (?, ?, ?, ?)",
+                    (
+                        datetime.utcnow().isoformat(),
+                        extracted.get("person", "both"),
+                        extracted.get("mood", ""),
+                        extracted.get("note", ""),
+                    )
+                )
+                conn.commit()
 
     elif kind == "plan":
-        plans = _read("plans.json")
-        plans.append({
-            "id": str(uuid.uuid4()),
-            "type": extracted.get("plan_type", "todo"),
-            "title": extracted.get("title", ""),
-            "description": extracted.get("description", ""),
-            "status": extracted.get("status", "idea"),
-            "created_at": datetime.utcnow().isoformat(),
-        })
-        _write("plans.json", plans)
+        with _write_lock:
+            with get_db_conn() as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO plans (id, plan_type, title, description, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid.uuid4()),
+                        extracted.get("plan_type", "todo"),
+                        extracted.get("title", ""),
+                        extracted.get("description", ""),
+                        extracted.get("status", "idea"),
+                        datetime.utcnow().isoformat(),
+                    )
+                )
+                conn.commit()
 
 
 # ── Conversation history ──────────────────────────────────────
 
 def load_conversation_history(limit: int = 30) -> list:
-    try:
-        data = json.loads(CONVERSATION_FILE.read_text())
-        return data[-limit:] if isinstance(data, list) else []
-    except Exception:
-        return []
+    with get_db_conn() as conn:
+        rows = conn.execute(
+            "SELECT timestamp, user_text, fyra_text FROM conversations ORDER BY id DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    return [{"timestamp": r["timestamp"], "user": r["user_text"], "fyra": r["fyra_text"]}
+            for r in reversed(rows)]
 
 
 def save_conversation_turn(user_text: str, fyra_text: str):
-    history = load_conversation_history(MAX_CONVERSATION)
-    history.append({
-        "timestamp": datetime.utcnow().isoformat(),
-        "user": user_text,
-        "fyra": fyra_text,
-    })
-    CONVERSATION_FILE.write_text(json.dumps(history[-MAX_CONVERSATION:], indent=2))
+    with _write_lock:
+        with get_db_conn() as conn:
+            conn.execute(
+                "INSERT INTO conversations (timestamp, user_text, fyra_text) VALUES (?, ?, ?)",
+                (datetime.utcnow().isoformat(), user_text, fyra_text)
+            )
+            conn.execute("""
+                DELETE FROM conversations
+                WHERE id NOT IN (
+                    SELECT id FROM conversations ORDER BY id DESC LIMIT ?
+                )
+            """, (MAX_CONVERSATION,))
+            conn.commit()
 
 
 def get_history_for_assistant(limit: int = 5) -> list:
-    """Return last N turns as Claude messages format for context injection."""
     history = load_conversation_history(limit)
     messages = []
     for turn in history:
-        messages.append({"role": "user", "content": turn["user"]})
+        messages.append({"role": "user",      "content": turn["user"]})
         messages.append({"role": "assistant", "content": turn["fyra"]})
     return messages
 
@@ -242,34 +286,36 @@ def get_history_for_assistant(limit: int = 5) -> list:
 # ── Live profile data for UI ──────────────────────────────────
 
 def get_profile_panel_data() -> dict:
-    profiles = _read("profiles.json")
-    favour = profiles.get("favour", {})
-    fiyin = profiles.get("fiyin", {})
-    plans = _read("plans.json")
-    open_tasks = [p for p in plans if p.get("status") != "done"]
+    with get_db_conn() as conn:
+        profile_rows = conn.execute("SELECT person, field, value FROM profiles").fetchall()
+        plan_rows    = conn.execute("SELECT status FROM plans").fetchall()
+
+    profiles = _profile_to_dict(profile_rows)
+    favour   = profiles.get("favour", {})
+    fiyin    = profiles.get("fiyin",  {})
+    open_tasks = sum(1 for r in plan_rows if r["status"] != "done")
 
     return {
         "favour": {
-            "name": favour.get("full_name", "Favour"),
+            "name":     favour.get("full_name", "Favour"),
             "birthday": favour.get("birthday", "—"),
-            "likes": favour.get("likes", [])[:3],
-            "facts": favour.get("facts", [])[:2],
+            "likes":    favour.get("likes", [])[:3],
+            "facts":    favour.get("facts", [])[:2],
         },
         "fiyin": {
-            "name": fiyin.get("full_name", "Fiyin"),
+            "name":     fiyin.get("full_name", "Fiyin"),
             "birthday": fiyin.get("birthday", "—"),
-            "likes": fiyin.get("likes", [])[:3],
-            "facts": fiyin.get("facts", [])[:2],
+            "likes":    fiyin.get("likes", [])[:3],
+            "facts":    fiyin.get("facts", [])[:2],
         },
-        "open_tasks": len(open_tasks),
+        "open_tasks": open_tasks,
     }
 
 
 # ── Startup reminders ─────────────────────────────────────────
 
 def get_startup_brief() -> str:
-    """Return a brief for Fyra to deliver on startup. Empty string = nothing to say."""
-    mem = load_all()
+    mem   = load_all()
     today = date.today()
     alerts = []
 
@@ -279,8 +325,7 @@ def get_startup_brief() -> str:
             continue
         try:
             event_date = datetime.strptime(event_date_str, "%Y-%m-%d").date()
-            # Check anniversary this year
-            this_year = event_date.replace(year=today.year)
+            this_year  = event_date.replace(year=today.year)
             days_until = (this_year - today).days
             if 0 <= days_until <= 7:
                 label = "today" if days_until == 0 else f"in {days_until} day{'s' if days_until > 1 else ''}"
@@ -294,29 +339,33 @@ def get_startup_brief() -> str:
 
     if not alerts:
         return ""
-
     return "Quick brief: " + "; ".join(alerts) + "."
 
 
-def log_question_pattern(intent: str, user_input: str, client):
-    """Append question to rolling log; every 10 entries generate fresh insights via haiku."""
-    from config import MODEL_FAST
-    try:
-        data = json.loads(PATTERNS_FILE.read_text())
-    except Exception:
-        data = {"question_log": [], "insights": ""}
+# ── Pattern learning ──────────────────────────────────────────
 
-    log = data.get("question_log", [])
+def log_question_pattern(intent: str, user_input: str, client):
+    from config import MODEL_FAST
+    import db as _db
+
+    with get_db_conn() as conn:
+        row = conn.execute("SELECT question_log, insights FROM patterns WHERE id = 1").fetchone()
+
+    if row:
+        log      = json.loads(row["question_log"] or "[]")
+        insights = row["insights"] or ""
+    else:
+        log      = []
+        insights = ""
+
     log.append({"timestamp": datetime.utcnow().isoformat(), "intent": intent, "text": user_input[:200]})
     if len(log) > 100:
         log = log[-100:]
-    data["question_log"] = log
 
     if len(log) % 10 == 0:
-        recent = log[-20:]
+        recent  = log[-20:]
         summary = "\n".join(f"[{e['intent']}] {e['text']}" for e in recent)
         try:
-            import db as _db
             resp = client.messages.create(
                 model=MODEL_FAST,
                 max_tokens=150,
@@ -329,18 +378,24 @@ def log_question_pattern(intent: str, user_input: str, client):
                 messages=[{"role": "user", "content": f"Recent questions:\n{summary}"}],
             )
             _db.track_usage(MODEL_FAST, resp.usage.input_tokens, resp.usage.output_tokens)
-            data["insights"] = resp.content[0].text.strip()
+            insights = resp.content[0].text.strip()
         except Exception:
             pass
 
-    PATTERNS_FILE.write_text(json.dumps(data, indent=2))
+    with _write_lock:
+        with get_db_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO patterns (id, question_log, insights) VALUES (1, ?, ?)",
+                (json.dumps(log), insights)
+            )
+            conn.commit()
 
 
 def save_correction(user_input: str, prior_response: str, client):
-    """Extract what was wrong and what the correct answer is, then persist it."""
     from config import MODEL_FAST
+    import db as _db
+
     try:
-        import db as _db
         resp = client.messages.create(
             model=MODEL_FAST,
             max_tokens=150,
@@ -357,6 +412,7 @@ def save_correction(user_input: str, prior_response: str, client):
             }],
         )
         _db.track_usage(MODEL_FAST, resp.usage.input_tokens, resp.usage.output_tokens)
+        import re
         raw = resp.content[0].text.strip()
         raw = re.sub(r"```(?:json)?\n?", "", raw).replace("```", "").strip()
         parsed = json.loads(raw)
@@ -365,45 +421,63 @@ def save_correction(user_input: str, prior_response: str, client):
     except Exception:
         return
 
-    try:
-        corrections = json.loads(CORRECTIONS_FILE.read_text())
-    except Exception:
-        corrections = []
+    topic     = str(parsed.get("topic", "")).strip()
+    was_wrong = str(parsed.get("was_wrong", "")).strip()
+    correct   = str(parsed.get("correct_is", "")).strip()
 
-    corrections.append({
-        "timestamp": datetime.utcnow().isoformat(),
-        "topic": parsed.get("topic", ""),
-        "was_wrong": parsed.get("was_wrong", ""),
-        "correct_is": parsed.get("correct_is", ""),
-    })
-    CORRECTIONS_FILE.write_text(json.dumps(corrections[-50:], indent=2))
+    # Validation
+    if not (2 <= len(topic) <= 100):
+        return
+    if not was_wrong or not correct:
+        return
+    user_words = {w for w in user_input.lower().split() if len(w) > 2}
+    haystack   = (topic + " " + was_wrong).lower()
+    if not any(w in haystack for w in user_words):
+        return
+
+    with _write_lock:
+        with get_db_conn() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO corrections (timestamp, topic, was_wrong, correct_is) VALUES (?, ?, ?, ?)",
+                (datetime.utcnow().isoformat(), topic, was_wrong, correct)
+            )
+            # Rolling 50-row cap
+            conn.execute("""
+                DELETE FROM corrections
+                WHERE id NOT IN (
+                    SELECT id FROM corrections ORDER BY id DESC LIMIT 50
+                )
+            """)
+            conn.commit()
 
 
 def get_learning_context() -> str:
-    """Return insights and recent corrections to inject into the conversation context."""
     parts = []
-    try:
-        data = json.loads(PATTERNS_FILE.read_text())
-        insights = data.get("insights", "").strip()
+
+    with get_db_conn() as conn:
+        pat_row = conn.execute("SELECT insights FROM patterns WHERE id = 1").fetchone()
+        cor_rows = conn.execute(
+            "SELECT topic, was_wrong, correct_is FROM corrections ORDER BY id DESC LIMIT 5"
+        ).fetchall()
+
+    if pat_row:
+        insights = (pat_row["insights"] or "").strip()
         if insights:
             parts.append(f"Observed patterns about these users:\n{insights}")
-    except Exception:
-        pass
 
-    try:
-        corrections = json.loads(CORRECTIONS_FILE.read_text())
-        recent = [c for c in corrections[-5:] if c.get("topic")]
-        if recent:
-            lines = [
-                f"  - On '{c['topic']}': previously said '{c['was_wrong']}' but correct is '{c['correct_is']}'"
-                for c in recent
-            ]
+    if cor_rows:
+        lines = [
+            f"  - On '{r['topic']}': previously said '{r['was_wrong']}' but correct is '{r['correct_is']}'"
+            for r in cor_rows
+            if r["topic"]
+        ]
+        if lines:
             parts.append("Known corrections (never repeat these mistakes):\n" + "\n".join(lines))
-    except Exception:
-        pass
 
     return "\n\n".join(parts)
 
+
+# ── Interaction log ───────────────────────────────────────────
 
 def log_interaction(user_input: str, intent: str, response: str):
     logging.info("INTENT=%s | INPUT=%s | RESPONSE=%s", intent, user_input[:120], response[:200])

@@ -1,5 +1,6 @@
 import re
 import json
+import concurrent.futures
 from datetime import date
 
 import db as _db
@@ -109,7 +110,14 @@ def respond_stream(user_input: str, memory_context: str, client, sid: str, on_to
                 })
                 if on_tool_call:
                     on_tool_call(block.name, block.input)
-                result = execute_tool(block.name, block.input)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    future = ex.submit(execute_tool, block.name, block.input)
+                    try:
+                        result = future.result(timeout=15)
+                    except concurrent.futures.TimeoutError:
+                        result = "[FAILED] Tool timed out after 15 seconds."
+                    except Exception as exc:
+                        result = f"[FAILED] Tool raised an exception: {exc}"
                 print(f"[Tool] {block.name}({block.input}) → {len(result)} chars")
                 tool_results.append({
                     "type": "tool_result",
