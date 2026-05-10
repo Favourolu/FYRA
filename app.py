@@ -657,7 +657,16 @@ def on_connect():
     if history:
         socketio.emit("conversation_history", {"history": history}, to=sid)
 
-    # Jarvis-style: ask who's there every session
+    # If client already knows who they are (reconnect), skip the name prompt
+    known_person = request.args.get("person", "").strip().lower()
+    if known_person in ("favour", "fiyin"):
+        threading.Thread(
+            target=_emit_greeting,
+            args=(sid, "Mr. Favour" if known_person == "favour" else "Miss Fiyin", known_person),
+            daemon=True,
+        ).start()
+        return
+
     prompt = "Who am I speaking with?"
     audio = _tts(prompt)
     socketio.emit("greeting_prompt", {"text": prompt, "audio": audio}, to=sid)

@@ -1,6 +1,7 @@
 // ── SocketIO ─────────────────────────────────────────────────
-const _token = new URLSearchParams(window.location.search).get('token') || '';
-const socket = io({ query: { token: _token } });
+const _token  = new URLSearchParams(window.location.search).get('token') || '';
+const _knownPerson = sessionStorage.getItem('fyra_person') || '';
+const socket  = io({ query: { token: _token, person: _knownPerson } });
 
 // ── DOM ──────────────────────────────────────────────────────
 const canvas       = document.getElementById('orbCanvas');
@@ -485,6 +486,7 @@ socket.on('stream_end', data => {
     // After greeting completes, mark session as greeted and send voice attribution
     if (data.intent === 'greeting' && data.person) {
         _greetingComplete = true;
+        sessionStorage.setItem('fyra_person', data.person);
         socket.emit('voice_learn_confirm', { person: data.person });
     }
     // Don't go idle here — let playNextChunk() handle it when audio actually finishes
