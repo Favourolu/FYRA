@@ -344,6 +344,7 @@ micBtn.addEventListener('click', () => {
 });
 
 // ── Voice ID ──────────────────────────────────────────────────
+let _greetingComplete  = false;  // set true once greeting finishes — blocks re-greeting loop
 let _voiceIdSampling   = false;
 let _voiceIdAnalyser   = null;
 let _voiceIdStream     = null;
@@ -392,13 +393,13 @@ async function _collectVoiceSample() {
 }
 
 socket.on('voice_id_result', data => {
-    if (data.matched && data.person) {
-        // Server recognised the voice — skip name prompt, emit as greeting
+    // Only act on voice match if greeting hasn't completed yet this session.
+    // After greeting, voice_id_result is pure training data — never re-trigger greeting.
+    if (data.matched && data.person && !_greetingComplete) {
         greetingMode = false;
         textInput.placeholder = 'ask fyra anything...';
         socket.emit('greeting_response', { text: data.person });
     }
-    // If not matched, fall through to the normal name prompt (already shown)
 });
 
 // ── Greeting mode ─────────────────────────────────────────────
@@ -469,8 +470,9 @@ socket.on('stream_end', data => {
         orbResponse.classList.add('visible');
     }
     responseFadeTimer = setTimeout(() => orbResponse.classList.remove('visible'), 3000);
-    // After greeting completes, send voice sample attribution if we have one
+    // After greeting completes, mark session as greeted and send voice attribution
     if (data.intent === 'greeting' && data.person) {
+        _greetingComplete = true;
         socket.emit('voice_learn_confirm', { person: data.person });
     }
     // Don't go idle here — let playNextChunk() handle it when audio actually finishes
@@ -486,7 +488,10 @@ socket.on('connect', () => {
         setTimeout(() => sendMessage(msg), 800);
     }
 });
-socket.on('disconnect', () => { document.getElementById('connText').textContent = 'offline'; });
+socket.on('disconnect', () => {
+    document.getElementById('connText').textContent = 'offline';
+    _greetingComplete = false;
+});
 
 socket.on('profile_update', data => {
     const f = data.favour || {}, fi = data.fiyin || {};
