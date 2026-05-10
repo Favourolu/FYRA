@@ -3,13 +3,16 @@ import re
 import csv
 import json
 import queue
+import atexit
 import base64
 import threading
 import io as _io
 import time as _time
 import socket as _socket
-from flask import Flask, render_template, request
+from datetime import datetime as _dt
+from flask import Flask, render_template, request, redirect
 from flask_socketio import SocketIO, emit
+from werkzeug.middleware.proxy_fix import ProxyFix
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,6 +32,7 @@ from tools import fetch_afriterminal_data
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.urandom(24)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)  # HTTPS on Railway
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
@@ -37,6 +41,9 @@ FYRA_TOKEN = os.getenv("FYRA_ACCESS_TOKEN", "").strip()
 
 # sid → "favour" | "fiyin" — tracks connected known users for proactive features
 _connected_known: dict = {}
+
+# Last AfriTerminal market_summary Last-Modified seen by the monitor job
+_last_market_ts: str = ""
 
 
 def _local_ip() -> str:
@@ -226,6 +233,197 @@ def _push_market_brief(sid: str):
             socketio.emit("chart_data", chart, to=sid)
 
 
+# ── Google Calendar helpers ───────────────────────────────────
+
+def _google_flow():
+    from google_auth_oauthlib.flow import Flow
+    return Flow.from_client_config(
+        {
+            "web": {
+                "client_id":     os.getenv("GOOGLE_CLIENT_ID", ""),
+                "client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
+                "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
+                "token_uri":     "https://oauth2.googleapis.com/token",
+                "redirect_uris": [os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5000/auth/google/callback")],
+            }
+        },
+        scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+        redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5000/auth/google/callback"),
+    )
+
+
+def get_upcoming_events(person: str) -> str:
+    """Return next 3 calendar events as a string, or empty string if unavailable."""
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        import db as _db
+        with _db.get_db_conn() as conn:
+            row = conn.execute(
+                "SELECT access_token, refresh_token, expiry, scopes FROM calendar_tokens WHERE person=?",
+                (person,)
+            ).fetchone()
+        if not row:
+            return ""
+        creds = Credentials(
+            token=row["access_token"],
+            refresh_token=row["refresh_token"],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=os.getenv("GOOGLE_CLIENT_ID", ""),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET", ""),
+            scopes=(row["scopes"] or "").split(),
+        )
+        if creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            with _db.get_db_conn() as conn:
+                conn.execute(
+                    "UPDATE calendar_tokens SET access_token=?, expiry=? WHERE person=?",
+                    (creds.token, str(creds.expiry), person)
+                )
+                conn.commit()
+
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        now = _dt.utcnow().isoformat() + "Z"
+        result = service.events().list(
+            calendarId="primary", timeMin=now, maxResults=3,
+            singleEvents=True, orderBy="startTime"
+        ).execute()
+        items = result.get("items", [])
+        if not items:
+            return ""
+        lines = []
+        for e in items:
+            start = e["start"].get("dateTime", e["start"].get("date", ""))[:16]
+            lines.append(f"  {start}: {e.get('summary', 'Untitled event')}")
+        return "Upcoming calendar events:\n" + "\n".join(lines)
+    except Exception:
+        return ""
+
+
+# ── Scheduled jobs ────────────────────────────────────────────
+
+def _scheduled_morning_brief():
+    for sid in list(_connected_known.keys()):
+        threading.Thread(target=_push_market_brief, args=(sid,), daemon=True).start()
+
+
+def _scheduled_market_monitor():
+    global _last_market_ts
+    if not _connected_known:
+        return
+    raw = fetch_afriterminal_data("market_summary")
+    if "[FAILED]" in raw:
+        return
+    # Extract Last-Modified from the header line
+    header_line = raw.split("\n")[0]
+    ts_marker = "data as of: "
+    idx = header_line.find(ts_marker)
+    ts = header_line[idx + len(ts_marker):].strip() if idx != -1 else ""
+    if ts and ts != _last_market_ts and _last_market_ts:
+        _last_market_ts = ts
+        # Compose a one-sentence alert from the new data
+        try:
+            resp = _client.messages.create(
+                model=MODEL_FAST,
+                max_tokens=60,
+                system="You are Fyra. Write one spoken sentence alerting the user that fresh market data is available. Mention 1 key change. No markdown.",
+                messages=[{"role": "user", "content": raw[:1500]}],
+            )
+            _db.track_usage(MODEL_FAST, resp.usage.input_tokens, resp.usage.output_tokens)
+            alert = resp.content[0].text.strip()
+            for sid in list(_connected_known.keys()):
+                socketio.emit("proactive_brief", {"text": alert}, to=sid)
+                audio = _tts(alert)
+                if audio:
+                    socketio.emit("audio_chunk", {"audio": audio}, to=sid)
+        except Exception:
+            pass
+    elif not _last_market_ts:
+        _last_market_ts = ts
+
+
+def _scheduled_eod_summary():
+    if not _connected_known:
+        return
+    today_start = _dt.utcnow().strftime("%Y-%m-%dT00:00:00")
+    with _db.get_db_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_text, fyra_text FROM conversations WHERE timestamp >= ? ORDER BY id ASC",
+            (today_start,)
+        ).fetchall()
+    if not rows:
+        return
+    convo_summary = "\n".join(f"User: {r['user_text'][:100]}\nFyra: {r['fyra_text'][:150]}" for r in rows[-10:])
+    market_raw    = fetch_afriterminal_data("market_summary")
+    market_snip   = "" if "[FAILED]" in market_raw else market_raw[:800]
+    try:
+        resp = _client.messages.create(
+            model=MODEL_FAST,
+            max_tokens=120,
+            system=(
+                "You are Fyra. Deliver a 3-sentence end-of-day spoken summary. "
+                "Cover: what was discussed today, any open tasks, and one market highlight. "
+                "No markdown, no lists. Sound warm and efficient."
+            ),
+            messages=[{"role": "user", "content": f"Today's conversations:\n{convo_summary}\n\nMarket data:\n{market_snip}"}],
+        )
+        _db.track_usage(MODEL_FAST, resp.usage.input_tokens, resp.usage.output_tokens)
+        summary = resp.content[0].text.strip()
+    except Exception:
+        return
+    for sid in list(_connected_known.keys()):
+        socketio.emit("proactive_brief", {"text": summary}, to=sid)
+        audio = _tts(summary)
+        if audio:
+            socketio.emit("audio_chunk", {"audio": audio}, to=sid)
+
+
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    _scheduler = BackgroundScheduler(timezone="UTC")
+    _scheduler.add_job(_scheduled_morning_brief, "cron", day_of_week="mon-fri", hour=7, minute=0)
+    _scheduler.add_job(_scheduled_market_monitor, "interval", hours=2)
+    _scheduler.add_job(_scheduled_eod_summary, "cron", hour=17, minute=0)
+    _scheduler.start()
+    atexit.register(_scheduler.shutdown)
+    print("[Scheduler] Started — morning brief 07:00 UTC, monitor 2h, EOD 17:00 UTC")
+except Exception as _sched_err:
+    print(f"[Scheduler] Could not start: {_sched_err}")
+
+
+# ── OAuth routes ──────────────────────────────────────────────
+
+@app.route("/auth/google")
+def auth_google():
+    person = request.args.get("person", "favour").lower()
+    if not os.getenv("GOOGLE_CLIENT_ID"):
+        return "Google OAuth not configured — set GOOGLE_CLIENT_ID in .env", 400
+    flow = _google_flow()
+    url, state = flow.authorization_url(access_type="offline", prompt="consent",
+                                         state=person, include_granted_scopes="true")
+    return redirect(url)
+
+
+@app.route("/auth/google/callback")
+def auth_google_callback():
+    person = request.args.get("state", "favour").lower()
+    try:
+        flow = _google_flow()
+        flow.fetch_token(authorization_response=request.url)
+        creds = flow.credentials
+        with _db.get_db_conn() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO calendar_tokens (person, access_token, refresh_token, expiry, scopes)
+                VALUES (?, ?, ?, ?, ?)
+            """, (person, creds.token, creds.refresh_token, str(creds.expiry),
+                  " ".join(creds.scopes or [])))
+            conn.commit()
+        return f"Calendar connected for {person}. You can close this tab."
+    except Exception as e:
+        return f"OAuth error: {e}", 400
+
+
 # Stores names for guests mid-greeting flow: sid → entered name
 _pending_greeting: dict = {}
 
@@ -257,6 +455,10 @@ def on_connect():
 
 def _emit_greeting(sid: str, addressed_name: str, memory_key: str):
     ctx = memory_module.get_relevant_memory("check_in", memory_key)
+    if memory_key in ("favour", "fiyin"):
+        calendar_ctx = get_upcoming_events(memory_key)
+        if calendar_ctx:
+            ctx = ctx + "\n\n" + calendar_ctx
     greeting = _generate_greeting(addressed_name, ctx)
     socketio.emit("stream_start", {}, to=sid)
     socketio.emit("stream_chunk", {"text": greeting}, to=sid)
@@ -332,6 +534,12 @@ def handle_message(data):
     if len(text) > 500 and classified_intent == "general_chat":
         classified_intent = "filing_query"
     ctx = memory_module.get_relevant_memory(classified_intent, text)
+    if classified_intent == "task_help":
+        person = _connected_known.get(sid)
+        if person:
+            cal_ctx = get_upcoming_events(person)
+            if cal_ctx:
+                ctx = ctx + "\n\n" + cal_ctx
     learning = memory_module.get_learning_context()
     if learning:
         ctx = ctx + "\n\n" + learning

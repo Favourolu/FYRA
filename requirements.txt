@@ -9,3 +9,6 @@ gunicorn
 duckduckgo-search
 beautifulsoup4
 httpx
+apscheduler>=3.10,<4.0
+google-auth-oauthlib
+google-api-python-client
