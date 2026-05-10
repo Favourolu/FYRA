@@ -26,6 +26,12 @@
         <div class="orb-state-text" id="orbStateText">standby</div>
         <div class="orb-response" id="orbResponse"></div>
 
+        <!-- Chart overlay panel -->
+        <div class="chart-panel" id="chartPanel" style="display:none">
+            <div class="chart-title" id="chartTitle"></div>
+            <canvas id="chartCanvas"></canvas>
+        </div>
+
         <!-- Input bar -->
         <footer class="input-area">
             <!-- Mic button — tap to speak, tap again to stop -->
@@ -63,6 +69,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script>window.FYRA_STARTUP_CONTEXT = {{ startup_context | tojson }};</script>
     <script src="/static/js/fyra.js"></script>
 </body>

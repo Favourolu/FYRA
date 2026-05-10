@@ -46,7 +46,10 @@ def fetch_afriterminal_data(dataset):
         import httpx
         r = httpx.get(url, timeout=15, headers={"User-Agent":"Fyra/1.0"}, follow_redirects=True)
         r.raise_for_status()
-        return f"[AfriTerminal · {dataset} · {datetime.now().strftime('%Y-%m-%d %H:%M')} WAT]\n{r.text[:8000]}"
+        last_modified = r.headers.get("last-modified", "unknown")
+        fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        header = f"[AfriTerminal · {dataset} · fetched {fetched_at} WAT · data as of: {last_modified}]"
+        return f"{header}\n{r.text[:8000]}"
     except Exception as e: return f"[FAILED] Could not fetch AfriTerminal {dataset}: {e}"
 
 def execute_tool(name, inputs):

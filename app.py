@@ -1,8 +1,12 @@
 import os
 import re
+import csv
+import json
 import queue
 import base64
 import threading
+import io as _io
+import time as _time
 import socket as _socket
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
@@ -21,6 +25,7 @@ import memory as memory_module
 import db as _db
 from db import BudgetExceeded
 from config import MODEL_FAST
+from tools import fetch_afriterminal_data
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.urandom(24)
@@ -112,6 +117,115 @@ def _generate_greeting(addressed_name: str, memory_context: str) -> str:
     return response.content[0].text.strip()
 
 
+def _build_chart_data(dataset: str, raw: str):
+    """Parse raw AfriTerminal text into Chart.js-ready dict. Returns None on failure."""
+    try:
+        body = "\n".join(raw.split("\n")[1:]).strip()  # strip header line
+        if dataset == "market_summary":
+            data = json.loads(body)
+            gainers = data.get("top_gainers", [])[:8]
+            if not gainers:
+                return None
+            return {
+                "type": "bar", "title": "NGX Top Gainers",
+                "labels": [g.get("symbol", "") for g in gainers],
+                "datasets": [{"label": "Change %",
+                              "data": [round(float(g.get("change_pct", 0)), 2) for g in gainers]}],
+            }
+        elif dataset == "ngx_prices":
+            rows = []
+            for row in csv.DictReader(_io.StringIO(body)):
+                try:
+                    rows.append({"symbol": row.get("symbol", ""),
+                                 "volume": float(row.get("volume", 0) or 0),
+                                 "change_pct": float(row.get("change_pct", 0) or 0)})
+                except Exception:
+                    continue
+            rows.sort(key=lambda r: r["volume"], reverse=True)
+            top = rows[:10]
+            if not top:
+                return None
+            return {
+                "type": "bar", "title": "NGX Top by Volume",
+                "labels": [r["symbol"] for r in top],
+                "datasets": [{"label": "Change %",
+                              "data": [round(r["change_pct"], 2) for r in top]}],
+            }
+        elif dataset == "fx":
+            rows = []
+            for row in csv.DictReader(_io.StringIO(body)):
+                try:
+                    rows.append({"currency": row.get("currency", ""),
+                                 "rate": float(row.get("rate", 0) or 0)})
+                except Exception:
+                    continue
+            if not rows:
+                return None
+            return {
+                "type": "bar", "title": "FX Rates vs NGN",
+                "labels": [r["currency"] for r in rows],
+                "datasets": [{"label": "NGN per unit",
+                              "data": [round(r["rate"], 2) for r in rows]}],
+            }
+        elif dataset == "global":
+            data = json.loads(body)
+            items = (data if isinstance(data, list) else [])[:8]
+            if not items:
+                return None
+            return {
+                "type": "bar", "title": "Global Indices",
+                "labels": [i.get("symbol", "") for i in items],
+                "datasets": [{"label": "Change %",
+                              "data": [round(float(i.get("change_pct", 0)), 2) for i in items]}],
+            }
+    except Exception:
+        pass
+    return None
+
+
+def _push_market_brief(sid: str):
+    """Called in a background thread — waits 3s then sends a spoken market brief."""
+    _time.sleep(3)
+    if sid not in _connected_known:
+        return
+    market_raw = fetch_afriterminal_data("market_summary")
+    fx_raw     = fetch_afriterminal_data("fx")
+    if "[FAILED]" in market_raw and "[FAILED]" in fx_raw:
+        return
+
+    combined = ""
+    if "[FAILED]" not in market_raw:
+        combined += market_raw[:2000]
+    if "[FAILED]" not in fx_raw:
+        combined += "\n" + fx_raw[:1000]
+
+    try:
+        resp = _client.messages.create(
+            model=MODEL_FAST,
+            max_tokens=100,
+            system=(
+                "You are Fyra, a personal AI. Deliver a 2-sentence market brief spoken aloud. "
+                "No markdown, no lists. Mention 1-2 key NGX moves and the USD/NGN rate. "
+                "Be concise and natural."
+            ),
+            messages=[{"role": "user", "content": f"Market data:\n{combined}"}],
+        )
+        _db.track_usage(MODEL_FAST, resp.usage.input_tokens, resp.usage.output_tokens)
+        brief = resp.content[0].text.strip()
+    except Exception:
+        return
+
+    socketio.emit("proactive_brief", {"text": brief}, to=sid)
+    audio = _tts(brief)
+    if audio:
+        socketio.emit("audio_chunk", {"audio": audio}, to=sid)
+
+    if "[FAILED]" not in market_raw:
+        chart = _build_chart_data("market_summary", market_raw)
+        if chart:
+            socketio.emit("chart_data", chart, to=sid)
+
+
 # Stores names for guests mid-greeting flow: sid → entered name
 _pending_greeting: dict = {}
 
@@ -152,6 +266,7 @@ def _emit_greeting(sid: str, addressed_name: str, memory_key: str):
         socketio.emit("audio_chunk", {"audio": audio}, to=sid)
     if memory_key in ("favour", "fiyin"):
         _connected_known[sid] = memory_key
+        threading.Thread(target=_push_market_brief, args=(sid,), daemon=True).start()
 
 
 @socketio.on("greeting_response")
@@ -213,6 +328,9 @@ def handle_message(data):
     socketio.emit("status", {"state": "processing"}, to=sid)
 
     classified_intent = intent_module.classify(text, _client)
+    # Large pastes are treated as filing/document interpretation
+    if len(text) > 500 and classified_intent == "general_chat":
+        classified_intent = "filing_query"
     ctx = memory_module.get_relevant_memory(classified_intent, text)
     learning = memory_module.get_learning_context()
     if learning:
@@ -269,6 +387,16 @@ def handle_message(data):
 
     memory_module.save_conversation_turn(text, full_response)
     memory_module.log_interaction(text, classified_intent, full_response)
+
+    # Push chart data for market queries in a background thread
+    if classified_intent == "market_query":
+        def _emit_chart():
+            raw = fetch_afriterminal_data("market_summary")
+            if "[FAILED]" not in raw:
+                chart = _build_chart_data("market_summary", raw)
+                if chart:
+                    socketio.emit("chart_data", chart, to=sid)
+        threading.Thread(target=_emit_chart, daemon=True).start()
 
     profile_data = memory_module.get_profile_panel_data()
     socketio.emit("profile_update", profile_data, to=sid)

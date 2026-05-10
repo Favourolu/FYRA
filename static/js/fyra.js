@@ -193,10 +193,12 @@ function animate() {
 animate();
 
 // ── Audio queue (for streaming TTS) ──────────────────────────
-let audioQueue    = [];
+let audioQueue     = [];
 let isPlayingAudio = false;
-let activeSource  = null;
-let audioContext  = null;
+let activeSource   = null;
+let audioContext   = null;
+let _fyraPlaying   = false;  // true while Fyra's own audio is playing — suppresses VAD
+let _autoListenTimer = null;
 
 function ensureAudioContext() {
     if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -207,9 +209,24 @@ function playNextChunk() {
     if (audioQueue.length === 0) {
         isPlayingAudio = false;
         if (orbState === 'speaking') setOrbState('idle');
+        // Auto-open mic 400ms after last audio chunk ends (continuous voice mode)
+        if (!vadActive && !greetingMode) {
+            setTimeout(() => {
+                _fyraPlaying = false;
+                if (orbState === 'idle' && !vadActive && !greetingMode) {
+                    startVAD();
+                    _autoListenTimer = setTimeout(() => {
+                        if (vadActive && orbState === 'listening') stopVAD(false);
+                    }, 4000);
+                }
+            }, 400);
+        } else {
+            _fyraPlaying = false;
+        }
         return;
     }
     isPlayingAudio = true;
+    _fyraPlaying   = true;
     const b64 = audioQueue.shift();
     if (!b64) { playNextChunk(); return; }
 
@@ -271,11 +288,13 @@ async function startVAD() {
         // Start speech recognition
         if (recognition) recognition.start();
 
-        // Monitor silence
+        // Monitor silence (VAD threshold raised when Fyra is playing to suppress self-echo)
         function monitor() {
             if (!vadActive) return;
             const rms = getRMS(vadAnalyser);
-            if (rms > VAD_THRESHOLD) {
+            const threshold = _fyraPlaying ? 0.9 : VAD_THRESHOLD;
+            if (rms > threshold) {
+                if (_autoListenTimer) { clearTimeout(_autoListenTimer); _autoListenTimer = null; }
                 if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
             } else if (!silenceTimer) {
                 silenceTimer = setTimeout(() => stopVAD(true), SILENCE_MS);
@@ -346,6 +365,7 @@ function sendMessage(text) {
     text = text.trim();
     if (!text) return;
     ensureAudioContext();
+    dismissChart();
 
     if (greetingMode === 'name') {
         greetingMode = false;
@@ -454,7 +474,76 @@ socket.on('conversation_history', () => {});
 socket.on('startup_brief', () => {});
 socket.on('voice_set', () => {});
 
+// ── Proactive brief (market/scheduler push) ───────────────────
+socket.on('proactive_brief', data => {
+    if (data.text) showResponse(data.text);
+});
+
+// ── Chart panel ───────────────────────────────────────────────
+let _chartInstance = null;
+let _chartDismissTimer = null;
+
+function showChart(payload) {
+    const panel   = document.getElementById('chartPanel');
+    const titleEl = document.getElementById('chartTitle');
+    const canvas  = document.getElementById('chartCanvas');
+
+    titleEl.textContent = payload.title || '';
+
+    if (_chartInstance) { _chartInstance.destroy(); _chartInstance = null; }
+    if (_chartDismissTimer) clearTimeout(_chartDismissTimer);
+
+    _chartInstance = new Chart(canvas, {
+        type: payload.type || 'bar',
+        data: {
+            labels: payload.labels || [],
+            datasets: (payload.datasets || []).map(ds => ({
+                label: ds.label,
+                data: ds.data,
+                backgroundColor: ds.data.map(v => v >= 0 ? 'rgba(0,200,120,0.55)' : 'rgba(255,60,80,0.55)'),
+                borderColor:     ds.data.map(v => v >= 0 ? 'rgba(0,220,140,0.9)' : 'rgba(255,80,100,0.9)'),
+                borderWidth: 1,
+                borderRadius: 4,
+            })),
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { labels: { color: 'rgba(180,220,255,0.7)', font: { size: 10 } } },
+            },
+            scales: {
+                x: { ticks: { color: 'rgba(150,200,255,0.7)', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                y: { ticks: { color: 'rgba(150,200,255,0.7)', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            },
+        },
+    });
+
+    panel.style.display = 'block';
+    _chartDismissTimer = setTimeout(() => dismissChart(), 10000);
+}
+
+function dismissChart() {
+    const panel = document.getElementById('chartPanel');
+    panel.style.display = 'none';
+    if (_chartInstance) { _chartInstance.destroy(); _chartInstance = null; }
+    if (_chartDismissTimer) { clearTimeout(_chartDismissTimer); _chartDismissTimer = null; }
+}
+
+socket.on('chart_data', payload => {
+    try { showChart(payload); } catch (e) { console.error('[Chart]', e); }
+});
+
+// Dismiss chart when user speaks
+const _origSendMessage = sendMessage;
+document.getElementById('chartPanel').addEventListener('click', dismissChart);
+
 // ── Input ─────────────────────────────────────────────────────
 sendBtn.addEventListener('click', () => sendMessage(textInput.value));
 textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(textInput.value); });
+textInput.addEventListener('input', () => {
+    textInput.placeholder = textInput.value.length > 300
+        ? 'paste a filing or article to interpret...'
+        : 'ask fyra anything...';
+});
 document.addEventListener('touchstart', () => ensureAudioContext(), { once: true, passive: true });
